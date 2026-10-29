@@ -98,7 +98,15 @@ for (const file of files) {
   passed += all.length - bad.length;
   failed += bad.length;
   console.log(`${bad.length ? '✗' : '✓'} ${file} (${all.length - bad.length}/${all.length} checks, ${((Date.now() - t0) / 1000).toFixed(1)} s)`);
-  for (const r of bad) console.log(`    ✗ ${r.name}\n      ${String(r.detail ?? '').slice(0, 1500).replace(/\n/g, '\n      ')}`);
+  for (const r of bad) {
+    const detail = typeof r.detail === 'string' ? r.detail : JSON.stringify(r.detail ?? '');
+    console.log(`    ✗ ${r.name}\n      ${detail.slice(0, 1500).replace(/\n/g, '\n      ')}`);
+    // On GitHub Actions, also show the failure as an annotation on the run.
+    if (process.env.GITHUB_ACTIONS) {
+      const esc = (t) => t.replace(/%/g, '%25').replace(/\r/g, '').replace(/\n/g, '%0A');
+      console.log(`::error title=${esc(`${file}: ${r.name}`).replace(/[:,]/g, ' ')}::${esc(detail.slice(-3000))}`);
+    }
+  }
 }
 console.log(`\n${passed} checks passed, ${failed} failed\n`);
 process.exit(failed ? 1 : 0);
