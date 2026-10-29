@@ -1,10 +1,31 @@
-// Moves the mouse and types on Windows. Uses one long-running PowerShell process
-// with a small C# helper around the Win32 SendInput API, so Perch needs no extra
-// native modules. Coordinates are sent normalised to the virtual desktop
+// Moves the mouse, types, and reads the active window's controls on Windows.
+// Uses one long-running PowerShell process with small C# helpers around the
+// Win32 SendInput API and Windows UI Automation, so Perch needs no extra native
+// modules. Mouse coordinates are sent normalised to the virtual desktop
 // (0–65535), which works regardless of display scaling.
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { screen } from 'electron';
 import type { VKey } from './keys';
+
+export interface UiItem {
+  /** control type, e.g. "button", "edit", "hyperlink" */
+  t: string;
+  /** accessible name */
+  n: string;
+  /** current text value for fields (never for password fields) */
+  v: string;
+  /** password field */
+  p: boolean;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+export interface UiSnapshot {
+  title: string;
+  app: string;
+  items: UiItem[];
+}
 
 const CSHARP = String.raw`
 using System;
@@ -16,6 +37,17 @@ public static class PerchInput {
   [StructLayout(LayoutKind.Explicit)] struct UNION { [FieldOffset(0)] public MOUSEINPUT mi; [FieldOffset(0)] public KEYBDINPUT ki; }
   [StructLayout(LayoutKind.Sequential)] struct INPUT { public uint type; public UNION u; }
   [DllImport("user32.dll", SetLastError=true)] static extern uint SendInput(uint n, INPUT[] inputs, int size);
+  [DllImport("user32.dll")] static extern bool SetProcessDpiAwarenessContext(IntPtr ctx);
+  [DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();
+  [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
+  public static string ForegroundProcess() {
+    try {
+      uint pid; GetWindowThreadProcessId(GetForegroundWindow(), out pid);
+      return System.Diagnostics.Process.GetProcessById((int)pid).ProcessName;
+    } catch { return ""; }
+  }
+  // Per-monitor DPI awareness, so UI Automation reports real (physical) pixels.
+  public static void InitDpi() { try { SetProcessDpiAwarenessContext(new IntPtr(-4)); } catch {} }
   const uint MOVE=0x1, LDOWN=0x2, LUP=0x4, RDOWN=0x8, RUP=0x10, WHEEL=0x800, ABS=0x8000, VDESK=0x4000;
   const uint KUP=0x2, KUNICODE=0x4, KEXT=0x1;
   static void Send(INPUT i) { SendInput(1, new INPUT[] { i }, Marshal.SizeOf(typeof(INPUT))); }
@@ -54,16 +86,118 @@ public static class PerchInput {
 }
 `;
 
-// Reads commands line by line: "<id> <verb> <args...>", replies "<id> ok" or "<id> err <msg>".
+// UI Automation: lists the named, visible controls of the foreground window so
+// the agent can act on "the Send button" instead of guessing pixels.
+const CSHARP_UIA = String.raw`
+using System;
+using System.Text;
+using System.Diagnostics;
+using System.Threading.Tasks;
+using System.Runtime.InteropServices;
+using System.Windows.Automation;
+public static class PerchUia {
+  [DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();
+  [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
+  static string Esc(string s, int max) {
+    if (s == null) return "";
+    if (s.Length > max) s = s.Substring(0, max);
+    var sb = new StringBuilder();
+    foreach (char c in s) {
+      if (c == '"') sb.Append("\\\"");
+      else if (c == '\\') sb.Append("\\\\");
+      else if (c < 32) sb.Append(' ');
+      else sb.Append(c);
+    }
+    return sb.ToString();
+  }
+  static string Short(ControlType t) {
+    var n = t.ProgrammaticName; int i = n.LastIndexOf('.');
+    return (i >= 0 ? n.Substring(i + 1) : n).ToLowerInvariant();
+  }
+  public static string List(int max) {
+    var task = Task.Run(() => ListInner(max));
+    if (!task.Wait(6000)) return "{\"error\":\"timeout\"}";
+    return task.Result;
+  }
+  static string ListInner(int max) {
+    IntPtr h = GetForegroundWindow();
+    if (h == IntPtr.Zero) return "{\"error\":\"no window\"}";
+    var root = AutomationElement.FromHandle(h);
+    uint pid; GetWindowThreadProcessId(h, out pid);
+    string proc = "";
+    try { proc = Process.GetProcessById((int)pid).ProcessName; } catch {}
+    var types = new ControlType[] {
+      ControlType.Button, ControlType.Edit, ControlType.Hyperlink, ControlType.MenuItem, ControlType.TabItem,
+      ControlType.ListItem, ControlType.CheckBox, ControlType.RadioButton, ControlType.ComboBox,
+      ControlType.TreeItem, ControlType.SplitButton, ControlType.DataItem, ControlType.Document };
+    var conds = new Condition[types.Length];
+    for (int i = 0; i < types.Length; i++) conds[i] = new PropertyCondition(AutomationElement.ControlTypeProperty, types[i]);
+    var cond = new AndCondition(new OrCondition(conds), new PropertyCondition(AutomationElement.IsOffscreenProperty, false));
+    var cr = new CacheRequest();
+    cr.Add(AutomationElement.NameProperty);
+    cr.Add(AutomationElement.ControlTypeProperty);
+    cr.Add(AutomationElement.BoundingRectangleProperty);
+    cr.Add(AutomationElement.IsPasswordProperty);
+    cr.Add(AutomationElement.IsEnabledProperty);
+    cr.Add(ValuePattern.ValueProperty);
+    cr.AutomationElementMode = AutomationElementMode.None;
+    AutomationElementCollection all;
+    using (cr.Activate()) { all = root.FindAll(TreeScope.Descendants, cond); }
+    var sb = new StringBuilder();
+    sb.Append("{\"title\":\"").Append(Esc(root.Current.Name, 120)).Append("\",\"app\":\"").Append(Esc(proc, 60)).Append("\",\"items\":[");
+    int n = 0;
+    foreach (AutomationElement e in all) {
+      if (n >= max) break;
+      try {
+        var r = e.Cached.BoundingRectangle;
+        if (r.IsEmpty || r.Width < 3 || r.Height < 3) continue;
+        var t = e.Cached.ControlType;
+        string name = e.Cached.Name ?? "";
+        bool pw = e.Cached.IsPassword;
+        bool field = t == ControlType.Edit || t == ControlType.ComboBox || t == ControlType.Document;
+        if (name.Trim().Length == 0 && !field) continue;
+        if (!e.Cached.IsEnabled) continue;
+        string val = "";
+        if (field && !pw) {
+          object v = e.GetCachedPropertyValue(ValuePattern.ValueProperty, true);
+          if (v is string) val = (string)v;
+        }
+        if (n > 0) sb.Append(',');
+        sb.Append("{\"t\":\"").Append(Short(t)).Append("\",\"n\":\"").Append(Esc(name, 80))
+          .Append("\",\"v\":\"").Append(Esc(val, 60)).Append("\",\"p\":").Append(pw ? "true" : "false")
+          .Append(",\"x\":").Append((int)r.X).Append(",\"y\":").Append((int)r.Y)
+          .Append(",\"w\":").Append((int)r.Width).Append(",\"h\":").Append((int)r.Height).Append('}');
+        n++;
+      } catch {}
+    }
+    sb.Append("]}");
+    return sb.ToString();
+  }
+}
+`;
+
+// Reads commands line by line: "<id> <verb> <args...>", replies "<id> ok [base64 payload]" or "<id> err <msg>".
 const LOOP = String.raw`
 $ErrorActionPreference = 'Stop'
 Add-Type -TypeDefinition $env:PERCH_CS -Language CSharp
+[PerchInput]::InitDpi()
+$uia = $false
+try {
+  Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes, WindowsBase
+  $want = @('UIAutomationClient', 'UIAutomationTypes', 'WindowsBase', 'System.Xaml')
+  $refs = [AppDomain]::CurrentDomain.GetAssemblies() | Where-Object { $want -contains $_.GetName().Name } | ForEach-Object { $_.Location }
+  Add-Type -TypeDefinition $env:PERCH_UIA -Language CSharp -ReferencedAssemblies $refs
+  $uia = $true
+} catch {
+  [Console]::Error.WriteLine("UI Automation unavailable: $($_.Exception.Message)")
+}
 [Console]::Out.WriteLine('ready')
 while ($true) {
   $line = [Console]::In.ReadLine()
   if ($line -eq $null) { break }
   $p = $line.Split(' ')
   $id = $p[0]
+  $payload = ''
   try {
     switch ($p[1]) {
       'move'   { [PerchInput]::MoveTo([int]$p[2], [int]$p[3]) }
@@ -71,10 +205,15 @@ while ($true) {
       'scroll' { [PerchInput]::Scroll([int]$p[2], [int]$p[3], [int]$p[4]) }
       'combo'  { [PerchInput]::Combo($p[2]) }
       'text'   { [PerchInput]::Text($p[2]) }
+      'elements' {
+        if (-not $uia) { throw 'UI Automation is not available on this PC' }
+        $payload = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes([PerchUia]::List([int]$p[2])))
+      }
+      'fg'     { $payload = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes([PerchInput]::ForegroundProcess() + ' ')) }
       'ping'   { }
       default  { throw "unknown command $($p[1])" }
     }
-    [Console]::Out.WriteLine("$id ok")
+    if ($payload) { [Console]::Out.WriteLine("$id ok $payload") } else { [Console]::Out.WriteLine("$id ok") }
   } catch {
     [Console]::Out.WriteLine("$id err $($_.Exception.Message -replace '\s+', ' ')")
   }
@@ -85,7 +224,7 @@ export class WindowsInput {
   private proc: ChildProcessWithoutNullStreams | null = null;
   private ready: Promise<void> | null = null;
   private nextId = 1;
-  private pending = new Map<number, { resolve: () => void; reject: (e: Error) => void }>();
+  private pending = new Map<number, { resolve: (payload: string) => void; reject: (e: Error) => void }>();
   private buf = '';
 
   private start(): Promise<void> {
@@ -100,13 +239,13 @@ export class WindowsInput {
       const proc = spawn(
         'powershell.exe',
         ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', encoded],
-        { env: { ...process.env, PERCH_CS: CSHARP }, windowsHide: true },
+        { env: { ...process.env, PERCH_CS: CSHARP, PERCH_UIA: CSHARP_UIA }, windowsHide: true },
       );
       this.proc = proc;
       let started = false;
       const timer = setTimeout(() => {
         if (!started) reject(new Error('The input helper took too long to start.'));
-      }, 20_000);
+      }, 30_000);
       proc.stdout.setEncoding('utf8');
       proc.stdout.on('data', (chunk: string) => {
         this.buf += chunk;
@@ -126,7 +265,7 @@ export class WindowsInput {
           const p = this.pending.get(Number(m[1]));
           if (!p) continue;
           this.pending.delete(Number(m[1]));
-          if (m[2] === 'ok') p.resolve();
+          if (m[2] === 'ok') p.resolve(m[3] ?? '');
           else p.reject(new Error(m[3] || 'Input command failed'));
         }
       });
@@ -143,10 +282,10 @@ export class WindowsInput {
     return this.ready;
   }
 
-  private async send(cmd: string): Promise<void> {
+  private async send(cmd: string): Promise<string> {
     await this.start();
     const id = this.nextId++;
-    return new Promise((resolve, reject) => {
+    return new Promise<string>((resolve, reject) => {
       this.pending.set(id, { resolve, reject });
       this.proc!.stdin.write(`${id} ${cmd}\n`);
       setTimeout(() => {
@@ -193,6 +332,20 @@ export class WindowsInput {
     for (let i = 0; i < chars.length; i += 400) {
       await this.send(`text ${Buffer.from(chars.slice(i, i + 400).join(''), 'utf8').toString('base64')}`);
     }
+  }
+
+  /** Process name of the window in front, e.g. "chrome" or "WindowsTerminal". */
+  async foregroundApp(): Promise<string> {
+    const payload = await this.send('fg');
+    return Buffer.from(payload, 'base64').toString('utf8').trim();
+  }
+
+  /** Named, visible controls of the foreground window (positions in physical pixels). */
+  async elements(max = 120): Promise<UiSnapshot> {
+    const payload = await this.send(`elements ${max}`);
+    const json = JSON.parse(Buffer.from(payload, 'base64').toString('utf8'));
+    if (json.error) throw new Error(`Couldn't read the window (${json.error}).`);
+    return json as UiSnapshot;
   }
 
   dispose() {

@@ -1,6 +1,6 @@
 // Settings and status panel, opened from the tray icon.
 import { perch } from './bridge';
-import type { AppStatus, ProviderId, Settings } from '../shared/types';
+import { NATURAL_VOICES, type AppStatus, type ProviderId, type Settings } from '../shared/types';
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 const $$ = <T extends HTMLElement = HTMLElement>(sel: string) => [...document.querySelectorAll<T>(sel)];
@@ -69,6 +69,25 @@ function renderStatus(s: AppStatus) {
       s.stt.kind === 'ready' ? 'Ready, runs on this PC' : s.stt.kind === 'error' ? s.stt.message : 'Runs on this PC';
   }
 
+  // Natural voice status
+  const ttsState = $('tts-state');
+  const ttsBar = $('tts-progress');
+  if (s.tts.kind === 'loading') {
+    ttsState.textContent = `Downloading natural voice… ${Math.round(s.tts.progress)}%`;
+    ttsBar.hidden = settings?.voiceEngine !== 'natural';
+    (ttsBar.firstElementChild as HTMLElement).style.width = `${s.tts.progress}%`;
+  } else {
+    ttsBar.hidden = true;
+    ttsState.textContent =
+      settings?.voiceEngine === 'windows'
+        ? 'Built-in Windows voices'
+        : s.tts.kind === 'ready'
+          ? 'Natural voice ready, runs on this PC'
+          : s.tts.kind === 'error'
+            ? s.tts.message
+            : 'Natural voice runs on this PC';
+  }
+
   const hk = $<HTMLSelectElement>('hotkey');
   hk.disabled = !s.hotkeyAvailable;
   $('hotkey-note').textContent = s.hotkeyAvailable
@@ -78,7 +97,18 @@ function renderStatus(s: AppStatus) {
   $('last').hidden = !s.lastQuestion;
   $('last-q').textContent = s.lastQuestion;
   $('last-a').textContent = s.lastAnswer || (s.state === 'thinking' || s.state === 'working' ? '…' : '');
-  $('version').textContent = `v${s.version}`;
+  const u = s.update;
+  const card = $('update');
+  card.hidden = u.kind !== 'ready';
+  if (u.kind === 'ready') $('update-text').textContent = `Perch ${u.version} is ready to install.`;
+  $('version').textContent =
+    u.kind === 'checking'
+      ? 'Checking for updates…'
+      : u.kind === 'downloading'
+        ? `Downloading ${u.version} (${Math.round(u.progress)}%)`
+        : u.kind === 'current'
+          ? `v${s.version} · up to date`
+          : `v${s.version}`;
 }
 
 // ------------------------------------------------------------ settings
@@ -144,12 +174,22 @@ function renderSettings(s: Settings) {
   $<HTMLSelectElement>('hotkey').value = s.hotkey;
   $<HTMLSelectElement>('stt').value = s.whisperModel;
   $<HTMLInputElement>('speak').checked = s.speakReplies;
+  $<HTMLInputElement>('wake').checked = s.wakeWord;
+  $<HTMLInputElement>('memory-on').checked = s.memoryEnabled;
   $<HTMLInputElement>('rate').value = String(s.speechRate);
   $('rate-value').textContent = `${s.speechRate.toFixed(2).replace(/0$/, '')}×`;
   $<HTMLInputElement>('idle').checked = s.showWhenIdle;
   $<HTMLInputElement>('login').checked = s.launchAtLogin;
   $<HTMLSelectElement>('voice').value = s.voiceName;
   $<HTMLSelectElement>('voice').disabled = !s.speakReplies;
+  for (const b of $$('#voice-engine button')) b.setAttribute('aria-checked', String(b.dataset.value === s.voiceEngine));
+  const nv = $<HTMLSelectElement>('natural-voice');
+  if (!nv.length) for (const v of NATURAL_VOICES) nv.add(new Option(v.label, v.id));
+  nv.value = s.naturalVoice;
+  nv.hidden = s.voiceEngine !== 'natural';
+  $<HTMLSelectElement>('voice').hidden = s.voiceEngine !== 'windows';
+  nv.disabled = !s.speakReplies;
+  if (status) renderStatus(status);
   $<HTMLInputElement>('rate').disabled = !s.speakReplies;
 }
 
@@ -270,7 +310,13 @@ $('stt').addEventListener('change', (e) =>
   update({ whisperModel: (e.target as HTMLSelectElement).value as Settings['whisperModel'] }),
 );
 $('speak').addEventListener('change', (e) => update({ speakReplies: (e.target as HTMLInputElement).checked }));
+$('wake').addEventListener('change', (e) => update({ wakeWord: (e.target as HTMLInputElement).checked }));
 $('voice').addEventListener('change', (e) => update({ voiceName: (e.target as HTMLSelectElement).value }));
+$('natural-voice').addEventListener('change', (e) => update({ naturalVoice: (e.target as HTMLSelectElement).value }));
+$('voice-engine').addEventListener('click', (e) => {
+  const v = (e.target as HTMLElement).closest('button')?.dataset.value;
+  if (v) void update({ voiceEngine: v as Settings['voiceEngine'] });
+});
 $('rate').addEventListener('input', (e) => {
   $('rate-value').textContent = `${Number((e.target as HTMLInputElement).value).toFixed(2).replace(/0$/, '')}×`;
 });
@@ -282,8 +328,83 @@ $('idle').addEventListener('change', (e) => update({ showWhenIdle: (e.target as 
 $('login').addEventListener('change', (e) => update({ launchAtLogin: (e.target as HTMLInputElement).checked }));
 $('new-convo').addEventListener('click', () => perch.send('panel:new-conversation'));
 $('quit').addEventListener('click', () => perch.send('panel:quit'));
+$('version').addEventListener('click', () => perch.send('panel:check-updates'));
+$('install-update').addEventListener('click', () => perch.send('panel:install-update'));
 
 perch.on('panel:status', (s: AppStatus) => renderStatus(s));
+
+// ------------------------------------------------------------ memory and reminders
+
+interface Notes {
+  memories: { id: string; text: string }[];
+  reminders: { id: string; due: string; text: string }[];
+}
+
+function whenLabel(iso: string) {
+  const d = new Date(iso);
+  const now = new Date();
+  const day = (x: Date) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+  const diff = Math.round((day(d) - day(now)) / 86_400_000);
+  const time = d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  if (diff === 0) return `Today ${time}`;
+  if (diff === 1) return `Tomorrow ${time}`;
+  return `${d.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' })} ${time}`;
+}
+
+function renderList(el: HTMLElement, items: { id: string; text: string; meta?: string }[], empty: string, onDelete: (id: string) => void) {
+  el.textContent = '';
+  if (!items.length) {
+    const li = document.createElement('li');
+    li.className = 'empty';
+    li.textContent = empty;
+    el.append(li);
+    return;
+  }
+  for (const it of items) {
+    const li = document.createElement('li');
+    const span = document.createElement('span');
+    span.textContent = it.text;
+    li.append(span);
+    if (it.meta) {
+      const small = document.createElement('small');
+      small.textContent = it.meta;
+      li.append(small);
+    }
+    const x = document.createElement('button');
+    x.className = 'x';
+    x.title = 'Delete';
+    x.setAttribute('aria-label', `Delete "${it.text}"`);
+    x.textContent = '×';
+    x.addEventListener('click', () => onDelete(it.id));
+    li.append(x);
+    el.append(li);
+  }
+}
+
+function renderNotes(n: Notes) {
+  renderList($('memory-list'), n.memories, 'Nothing yet. Tell Perch about yourself, or say “remember that…”.', (id) =>
+    perch.send('panel:memory-delete', id),
+  );
+  $('memory-actions').hidden = !n.memories.length;
+  renderList(
+    $('reminder-list'),
+    n.reminders.map((r) => ({ id: r.id, text: r.text, meta: whenLabel(r.due) })),
+    'No upcoming reminders.',
+    (id) => perch.send('panel:reminder-delete', id),
+  );
+}
+
+perch.on('panel:notes', (n: Notes) => renderNotes(n));
+$('memory-on').addEventListener('change', (e) => update({ memoryEnabled: (e.target as HTMLInputElement).checked }));
+$('memory-clear').addEventListener('click', () => {
+  if (confirm('Forget everything Perch remembers about you?')) perch.send('panel:memory-clear');
+});
+document.addEventListener('visibilitychange', async () => {
+  if (!document.hidden) {
+    const n = await perch.invoke<Notes>('panel:notes-get');
+    if (n) renderNotes(n);
+  }
+});
 // Re-check Ollama whenever the panel is shown again.
 document.addEventListener('visibilitychange', () => {
   if (!document.hidden && settings?.provider === 'ollama') void refreshOllama();
@@ -307,6 +428,8 @@ speechSynthesis.onvoiceschanged = fillVoices;
   renderSettings(init.settings);
   renderStatus(init.status);
   fillVoices();
+  const n = await perch.invoke<Notes>('panel:notes-get');
+  if (n) renderNotes(n);
   if (init.settings.provider === 'ollama') void refreshOllama();
 })();
 
@@ -329,10 +452,20 @@ async function demo() {
     ollama = { running: true, models: ['llama3.2:3b'] };
     renderOllama();
   }
+  const soon = new Date(Date.now() + 90 * 60_000).toISOString();
+  renderNotes({
+    memories: [
+      { id: '1', text: "The user's name is Anas" },
+      { id: '2', text: 'Prefers short answers' },
+    ],
+    reminders: [{ id: 'r', due: soon, text: 'Send the report to Priya' }],
+  });
   renderStatus({
     state: q.has('working') ? 'working' : 'idle',
     agentStep: 'Reading reviews on two sites',
     stt: { kind: 'ready' },
+    tts: { kind: 'loading', progress: 64 },
+    update: { kind: 'ready', version: '0.3.1' },
     provider,
     keys: { claude: false, gemini: q.has('ready') },
     aiReady: q.has('ready'),

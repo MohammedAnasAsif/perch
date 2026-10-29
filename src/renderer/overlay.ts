@@ -10,6 +10,8 @@ const pillText = $('pill-text');
 const bubble = $('bubble');
 const bubbleText = $('bubble-text');
 const target = $('target');
+const draw = document.getElementById('draw') as unknown as SVGSVGElement;
+const SVG_NS = 'http://www.w3.org/2000/svg';
 
 // Tip of the buddy sits this far from the cursor tip, beside the arrow.
 const FOLLOW_OFFSET = { x: 16, y: 18 };
@@ -130,13 +132,56 @@ function setBubble(m: BubbleMsg) {
 
 // ------------------------------------------------------------ pointing
 
+function addShape(p: PointMsg): { x: number; y: number } {
+  const s = p.shape!;
+  let el: SVGElement;
+  let perch = { x: p.x, y: p.y }; // where the buddy sits so it doesn't cover the drawing
+  if (s.kind === 'circle') {
+    el = document.createElementNS(SVG_NS, 'circle');
+    el.setAttribute('cx', String(p.x));
+    el.setAttribute('cy', String(p.y));
+    el.setAttribute('r', String(s.r));
+    perch = { x: p.x + s.r * 0.72, y: p.y + s.r * 0.72 };
+  } else if (s.kind === 'box') {
+    el = document.createElementNS(SVG_NS, 'rect');
+    el.setAttribute('x', String(p.x));
+    el.setAttribute('y', String(p.y));
+    el.setAttribute('width', String(Math.max(4, s.w)));
+    el.setAttribute('height', String(Math.max(4, s.h)));
+    el.setAttribute('rx', '6');
+    el.classList.add('box');
+    perch = { x: p.x + s.w, y: p.y + s.h };
+  } else {
+    el = document.createElementNS(SVG_NS, 'line');
+    el.setAttribute('x1', String(s.fromX));
+    el.setAttribute('y1', String(s.fromY));
+    el.setAttribute('x2', String(p.x));
+    el.setAttribute('y2', String(p.y));
+    el.setAttribute('marker-end', 'url(#arrowhead)');
+    // Sit just beyond the arrowhead, so the label is next to what the arrow points at.
+    const len = Math.hypot(p.x - s.fromX, p.y - s.fromY) || 1;
+    perch = { x: p.x + ((p.x - s.fromX) / len) * 18, y: p.y + ((p.y - s.fromY) / len) * 18 };
+  }
+  el.setAttribute('pathLength', '1');
+  el.classList.add('shape');
+  draw.appendChild(el);
+  return perch;
+}
+
+function clearShapes() {
+  for (const el of [...draw.querySelectorAll('.shape')]) {
+    el.classList.add('fading');
+    setTimeout(() => el.remove(), 300);
+  }
+}
+
 function pointAt(p: PointMsg) {
   const from = { ...pos };
-  const at = { x: p.x, y: p.y };
+  const at = p.shape ? addShape(p) : { x: p.x, y: p.y };
   mode = { kind: 'fly', from, to: () => at, start: performance.now(), then: { kind: 'perch', at } };
   buddy.classList.add('pointing');
   target.style.transform = `translate(${p.x}px, ${p.y}px)`;
-  target.classList.add('show');
+  target.classList.toggle('show', !p.shape);
   if (p.label) {
     pillText.textContent = p.label;
     pill.classList.add('show');
@@ -147,6 +192,7 @@ function pointAt(p: PointMsg) {
 
 function release() {
   target.classList.remove('show');
+  clearShapes();
   buddy.classList.remove('pointing');
   if (mode.kind === 'follow') return;
   if (state === 'working' && agentText) pillText.textContent = agentText;

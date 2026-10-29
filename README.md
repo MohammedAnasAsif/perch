@@ -9,6 +9,15 @@
   Hold a key, ask about anything on your screen, and it answers out loud, points at things, and can even do tasks for you.
 </p>
 
+<p align="center">
+  <a href="https://github.com/MohammedAnasAsif/perch/releases/latest"><b>Download for Windows</b></a> ·
+  <a href="https://mohammedanasasif.github.io/perch/">Website</a>
+</p>
+
+<p align="center">
+  <img src="docs/demo.gif" width="720" alt="Perch's blue buddy circles the Insert tab in a document and explains how to add page numbers" />
+</p>
+
 ---
 
 Perch is a Windows take on the "AI next to your cursor" idea popularised by
@@ -20,12 +29,14 @@ for the best quality.
 ## What it does
 
 - **Lives by your cursor.** A small blue buddy follows your mouse on every monitor.
-- **Push to talk.** Hold **Ctrl + Alt**, ask your question, let go.
-- **Sees your screen.** When you let go, Perch takes a screenshot of the monitor your cursor is on and sends it to the AI with your question.
-- **Talks back.** The answer streams into a speech bubble and is read aloud with a Windows voice, sentence by sentence.
-- **Points at things.** The buddy flies over to buttons and menus while it talks about them, like "click the Insert tab… then Page Number".
-- **Agent mode.** Start with **"agent"** and Perch does the task for you: it can research the web, write documents, and (if you allow it) click and type on your PC. See [Agent mode](#agent-mode).
-- **Remembers the conversation** for follow-ups until you start a new one.
+- **Push to talk, or "Hey Perch".** Hold **Ctrl + Alt**, ask, let go. Or turn on the wake word and just say "Hey Perch, …".
+- **Sees your screen.** When you ask, Perch takes a screenshot of the monitor your cursor is on and sends it to the AI with your question.
+- **Talks back** in a natural-sounding voice that runs on your PC (or a built-in Windows voice), sentence by sentence as the answer arrives.
+- **Points and draws.** The buddy flies to buttons and menus while it talks about them, and can circle things, highlight areas or draw arrows.
+- **Does things for you.** Ask it to *do* something ("open Chrome and search for…", "write me a note…") and the agent carries it out: it reads the window's buttons by name (Windows UI Automation), clicks, types and researches the web, asking before anything risky. See [Agent mode](#agent-mode).
+- **Works with what you select.** "Summarise the selected text", "translate what I copied".
+- **Remembers you and reminds you.** It keeps short notes about your preferences (shown and editable in the panel), and "remind me at 5 to send the report" just works.
+- **Keeps itself up to date** from GitHub Releases.
 - **Type instead** from the tray panel if you can't talk out loud.
 
 ## Choose your AI
@@ -51,7 +62,9 @@ for the best quality.
 ### Option 1: the installer
 
 1. Download **Perch-Setup-x.y.z.exe** from [Releases](../../releases/latest).
-2. Run it. The installer isn't code-signed yet, so Windows SmartScreen may warn you: click **More info → Run anyway**.
+2. Run it. The installer isn't code-signed yet, so Windows SmartScreen may warn you: click **More info → Run anyway**. (We're working on free signing through SignPath; see [docs/SIGNING.md](docs/SIGNING.md).)
+
+After that, Perch updates itself: new versions download in the background and install when you restart it (tray menu → **Restart to update**).
 
 ### Option 2: run from source
 
@@ -75,6 +88,16 @@ To build your own installer: `npm run dist` (the result lands in `release/`).
 
 Press **Esc** at any time to make Perch stop.
 
+## Voice
+
+- **Natural voice:** a small local voice model ([Kokoro](https://huggingface.co/onnx-community/Kokoro-82M-v1.0-ONNX), about 90 MB, downloaded once) reads answers aloud. Pick a voice and speed in the panel. If it can't load, Perch falls back to the Windows voices.
+- **"Hey Perch" wake word** (off by default): Perch listens for its name using the speech recognition on your PC. Say "Hey Perch, what's this error?" in one go, or "Hey Perch", wait for the buddy to listen, then ask. While it's on, Windows shows the microphone as in use. Nothing is sent anywhere until you say the wake word.
+
+## Memory and reminders
+
+- When you tell Perch something worth keeping ("I prefer short answers", "my manager is Priya"), it saves a short note on your PC and uses it in later conversations. See, delete or clear the notes under **Memory and reminders** in the panel, or turn memory off.
+- "Remind me at 5 to send the report", "remind me in 20 minutes to stretch": Perch shows a Windows notification and says it out loud. Reminders that came due while Perch was closed appear when it starts.
+
 ## Agent mode
 
 Ask Perch to *do* something ("open a new Chrome tab and search for…", "write me a note…") and it hands the request to its agent automatically. You can also start with **"agent"** to make sure:
@@ -83,7 +106,7 @@ Ask Perch to *do* something ("open a new Chrome tab and search for…", "write m
 - *"Agent, open Notepad and draft a leave application for tomorrow."*
 - *"Agent, summarise this article."* (with the page open in your browser)
 
-The agent works step by step: it can search the web, read pages, save documents to `Documents\Perch`, and, if **Let it use mouse and keyboard** is on, click, type, scroll and open apps. The buddy flies to each spot before clicking, and a status line shows what it's doing.
+The agent works step by step: it can search the web, read pages, save documents to `Documents\Perch`, and, if **Let it use mouse and keyboard** is on, open apps, click, type and scroll. Each step it reads the active window's buttons and fields by name through Windows UI Automation, so it can click "the Send button" precisely instead of guessing pixels; that makes even free models much more reliable. The buddy flies to each spot before clicking, and a status line shows what it's doing.
 
 **Safety:**
 

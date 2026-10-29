@@ -40,6 +40,8 @@ export function updateSettings(patch: Partial<Settings>): Settings {
   next.speechRate = Math.min(2, Math.max(0.5, next.speechRate));
   if (!['claude', 'gemini', 'ollama'].includes(next.provider)) next.provider = 'claude';
   if (!['risky', 'every'].includes(next.agentConfirm)) next.agentConfirm = 'risky';
+  if (!['natural', 'windows'].includes(next.voiceEngine)) next.voiceEngine = 'natural';
+  if (!/^[ab][fm]_[a-z]+$/.test(next.naturalVoice)) next.naturalVoice = 'af_heart';
   if (!/^https?:\/\/[^\s]+$/.test(next.ollamaUrl)) next.ollamaUrl = DEFAULT_SETTINGS.ollamaUrl;
   cache = next;
   mkdirSync(dir(), { recursive: true });

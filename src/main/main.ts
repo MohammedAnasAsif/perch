@@ -1,5 +1,5 @@
 // Perch main process: app lifecycle, tray, IPC and the cursor-following loop.
-import { app, BrowserWindow, ipcMain, Menu, nativeImage, screen, session, shell, Tray } from 'electron';
+import { app, BrowserWindow, ipcMain, Menu, nativeImage, Notification, screen, session, shell, Tray } from 'electron';
 import { join } from 'node:path';
 import { Companion } from './companion';
 import { Hotkey, FALLBACK_SHORTCUT } from './hotkey';
@@ -10,6 +10,9 @@ import { OLLAMA_SUGGESTED, ollamaStatus } from './ai/ollama';
 import { WindowsInput } from './agent/input';
 import { askApproval, destroyConfirm } from './confirm';
 import { installFileLog, logDir } from './log';
+import { checkForUpdates, initUpdater, installUpdate, updateStatus } from './updater';
+import { memories } from './store';
+import { deleteReminder, startReminders, stopReminders, upcomingReminders } from './reminders';
 import {
   createEngineWindow,
   createPanelWindow,
@@ -89,6 +92,9 @@ function buildTrayMenu() {
     { label: 'Open Perch', click: openPanel },
     { label: 'New conversation', click: () => companion.resetConversation() },
     { label: 'Open log folder', click: () => void shell.openPath(logDir()) },
+    updateStatus().kind === 'ready'
+      ? { label: 'Restart to update', click: () => installUpdate() }
+      : { label: 'Check for updates', click: () => void checkForUpdates() },
     { type: 'separator' },
     {
       label: 'Pause',
@@ -130,11 +136,32 @@ function startEngine() {
   });
 }
 
+function notes() {
+  return {
+    memories: memories.all().map((m) => ({ id: m.id, text: m.text })),
+    reminders: upcomingReminders().map((r) => ({ id: r.id, due: r.due, text: r.text })),
+  };
+}
+
+function sendNotes() {
+  if (panel && !panel.isDestroyed()) panel.webContents.send('panel:notes', notes());
+}
+
 function setupIpc() {
   // From the engine (mic, speech recognition, voice).
   ipcMain.on('engine:transcript', (_e, msg: TranscriptMsg) => companion.onTranscript(msg.text, msg.error));
   ipcMain.on('engine:level', (_e, level: number) => overlays.send('overlay:level', level));
+  ipcMain.on('engine:wake', (_e, m: { text: string; command: boolean }) => {
+    if (paused) return;
+    console.log('[perch] wake word', m.command ? `with request: "${m.text}"` : '(listening for request)');
+    companion.onWake(String(m?.text ?? ''), !!m?.command);
+  });
+  ipcMain.on('engine:wake-timeout', () => companion.onWakeTimeout());
   ipcMain.on('engine:stt-status', (_e, s: SttStatus) => companion.setSttStatus(s));
+  ipcMain.on('engine:tts-status', (_e, s: SttStatus) => {
+    if (s.kind !== 'loading') console.log('[perch] natural voice:', JSON.stringify(s));
+    companion.setTtsStatus(s);
+  });
   ipcMain.on('engine:utterance-start', (_e, id: number) => companion.onUtteranceStart(id));
   ipcMain.on('engine:utterance-end', (_e, id: number) => companion.onUtteranceEnd(id));
   ipcMain.on('engine:log', (_e, ...args: unknown[]) => console.log('[engine]', ...args));
@@ -187,6 +214,21 @@ function setupIpc() {
     }
   });
   ipcMain.on('panel:quit', () => app.quit());
+  ipcMain.handle('panel:notes-get', () => notes());
+  ipcMain.on('panel:memory-delete', (_e, id: string) => {
+    memories.remove(String(id));
+    sendNotes();
+  });
+  ipcMain.on('panel:memory-clear', () => {
+    memories.clear();
+    sendNotes();
+  });
+  ipcMain.on('panel:reminder-delete', (_e, id: string) => {
+    deleteReminder(String(id));
+    sendNotes();
+  });
+  ipcMain.on('panel:check-updates', () => void checkForUpdates());
+  ipcMain.on('panel:install-update', () => installUpdate());
 }
 
 function startCursorLoop() {
@@ -225,7 +267,9 @@ app.whenReady().then(() => {
     input,
     approve: askApproval,
     suppressHotkeys: (ms) => hotkey.suppress(ms),
+    onNotesChanged: () => sendNotes(),
     onStatus: broadcastStatus,
+    updateStatus,
     openPanel,
     hotkeyAvailable: () => hotkey?.available ?? false,
     version: app.getVersion(),
@@ -261,6 +305,29 @@ app.whenReady().then(() => {
 
   applySettings(settings);
 
+  startReminders(
+    (r, missedBy) => {
+      const late = missedBy > 2 * 60_000;
+      const when = new Date(r.due).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+      console.log('[perch] reminder due:', r.text);
+      if (Notification.isSupported()) {
+        new Notification({
+          title: 'Perch reminder',
+          body: late ? `${r.text} (was due at ${when})` : r.text,
+          icon: join(__dirname, 'assets', 'icon.png'),
+        }).show();
+      }
+      companion.announce(late ? `Reminder from ${when}: ${r.text}` : `Reminder: ${r.text}`);
+    },
+    () => sendNotes(),
+  );
+
+  initUpdater((u) => {
+    if (u.kind === 'ready') console.log('[perch] update downloaded:', u.version);
+    tray?.setContextMenu(buildTrayMenu());
+    companion.refreshStatus();
+  });
+
   // First run: help the user add their key.
   if (!aiReady()) setTimeout(openPanel, 800);
   if (isDev()) console.log('[perch] running in development mode');
@@ -276,6 +343,7 @@ app.on('window-all-closed', () => {
 app.on('before-quit', () => {
   if (cursorTimer) clearInterval(cursorTimer);
   hotkey?.stop();
+  stopReminders();
   input.dispose();
   destroyConfirm();
   overlays.destroyAll();

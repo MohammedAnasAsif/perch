@@ -39,6 +39,11 @@
         </div>
       </section>
 
+      <section id="update" class="card update" hidden>
+        <p id="update-text">An update is ready.</p>
+        <button id="install-update" class="primary" type="button">Restart to update</button>
+      </section>
+
       <form id="ask-form" class="ask">
         <input id="ask" type="text" placeholder="Ask about your screen, or start with “agent”…" autocomplete="off" aria-label="Ask Perch" />
         <button type="submit" class="icon-btn send" title="Ask" aria-label="Ask">
@@ -161,6 +166,10 @@
           </select>
         </div>
         <div class="item">
+          <label class="label" for="wake"><span>“Hey Perch” wake word</span><small>Keeps the mic on; listening stays on this PC</small></label>
+          <input id="wake" type="checkbox" class="toggle" />
+        </div>
+        <div class="item">
           <label class="label" for="stt"><span>Speech recognition</span><small id="stt-state">Runs on this PC</small></label>
           <select id="stt">
             <option value="Xenova/whisper-tiny.en">Fastest (English)</option>
@@ -176,8 +185,17 @@
           <input id="speak" type="checkbox" class="toggle" />
         </div>
         <div class="item">
-          <label class="label" for="voice"><span>Voice</span></label>
+          <div class="label"><span>Voice style</span><small id="tts-state">Natural voice runs on this PC</small></div>
+          <div class="segmented" id="voice-engine" role="radiogroup" aria-label="Voice style">
+            <button type="button" data-value="natural" role="radio">Natural</button>
+            <button type="button" data-value="windows" role="radio">Windows</button>
+          </div>
+        </div>
+        <div class="progress" id="tts-progress" hidden><span></span></div>
+        <div class="item">
+          <label class="label" for="natural-voice"><span>Voice</span></label>
           <div class="controls">
+            <select id="natural-voice"></select>
             <select id="voice"><option value="">System default</option></select>
             <button id="test-voice" class="subtle" title="Play a sample">Test</button>
           </div>
@@ -186,6 +204,21 @@
           <label class="label" for="rate"><span>Speed</span><small id="rate-value">1.0×</small></label>
           <input id="rate" type="range" min="0.7" max="1.6" step="0.05" />
         </div>
+      </section>
+
+      <h3 class="section-title">Memory and reminders</h3>
+      <section class="card list">
+        <div class="item">
+          <label class="label" for="memory-on"><span>Remember things about me</span><small>Stored only on this PC</small></label>
+          <input id="memory-on" type="checkbox" class="toggle" />
+        </div>
+        <ul id="memory-list" class="notes"></ul>
+        <div class="item sub" id="memory-actions" hidden>
+          <span class="spacer"></span>
+          <button id="memory-clear" class="subtle danger small">Forget everything</button>
+        </div>
+        <div class="item"><div class="label"><span>Reminders</span><small>Say “remind me at 5 to…”</small></div></div>
+        <ul id="reminder-list" class="notes"></ul>
       </section>
 
       <h3 class="section-title">Behaviour</h3>
@@ -204,7 +237,7 @@
     <footer>
       <button id="new-convo" class="subtle">New conversation</button>
       <span class="spacer"></span>
-      <span id="version" class="version"></span>
+      <button id="version" class="link version" title="Check for updates"></button>
       <button id="quit" class="subtle">Quit</button>
     </footer>
 

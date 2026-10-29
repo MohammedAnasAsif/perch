@@ -4,6 +4,8 @@ import { currentAi } from './ai';
 import type { ChatMessage, CoordSpace } from './ai/types';
 import type { Screenshot } from './capture';
 import { getSettings } from './settings';
+import { memoryPrompt } from './store';
+import { describeNow } from '../shared/remind';
 
 const MAX_TURNS_KEPT = 8;
 
@@ -29,7 +31,9 @@ function systemPrompt(shot: Screenshot | null, space: CoordSpace) {
     const c = coordInstructions(shot, space);
     screenPart = `With each message you get a screenshot of the user's current screen. The user's mouse cursor is at ${c.cursor}.
 
-You can point at things on the screen. To point, write a tag exactly like [POINT:x,y:short label], where ${c.describe}. Put the tag right before the sentence that talks about that thing, and Perch will fly over to it while that sentence is spoken. Point whenever showing the location helps (where to click, which button, where an error is). Use at most three points in a reply, and only point at things you can actually see in the screenshot. Never read out coordinates or mention the tag.`;
+You can point at things on the screen. To point, write a tag exactly like [POINT:x,y:short label], where ${c.describe}. Put the tag right before the sentence that talks about that thing, and Perch will fly over to it while that sentence is spoken. Point whenever showing the location helps (where to click, which button, where an error is). Use at most three points in a reply, and only point at things you can actually see in the screenshot. Never read out coordinates or mention the tag.
+
+You can also draw on the screen, using the same coordinates: [CIRCLE:x,y,r:label] circles something (r is the radius), [BOX:x,y,w,h:label] highlights an area (x,y is its top-left corner, w,h its size), and [ARROW:x1,y1,x2,y2:label] draws an arrow from one spot to another. Use a drawing instead of a point when it explains better, such as circling an error or showing where to drag something. At most three tags in total per reply.`;
   }
 
   return `You are Perch, a friendly AI buddy that sits next to the user's mouse cursor on their Windows PC. The user talks to you by voice (their words were transcribed automatically, so allow for small transcription mistakes).
@@ -42,7 +46,18 @@ Your replies are spoken aloud and shown in a small speech bubble, so:
 - If they ask for steps, give one or two steps at a time, then offer to continue.
 - If the request is unclear or the transcription looks garbled, briefly ask them to say it again.
 - Doing things: Perch has an agent mode that can act on the computer: open apps and websites, click, type, search the web, read pages and write documents. If the user asks you to DO something like that for them (for example "open a new Chrome tab and search for X", "find me…", "write a note…", "click the…", "go to…"), do not explain how and do not say you can't. Reply with exactly [AGENT] and nothing else, and the agent will carry it out. Only answer normally when they want information, an explanation, or to be shown where something is.
-- Be honest when you can't tell something from the screenshot.`;
+- Be honest when you can't tell something from the screenshot.
+
+The current local date and time is ${describeNow()}.
+
+Reminders: if the user asks to be reminded of something, add a tag [REMIND:YYYY-MM-DDTHH:MM|what to remind them] using their local time (or [REMIND:+20m|…] / [REMIND:+2h|…] for "in 20 minutes" or "in 2 hours"), and confirm the time in your reply.
+${
+  getSettings().memoryEnabled
+    ? `
+Memory: when the user shares something worth knowing in future conversations (their name, preferences, ongoing projects, people they often mention) or asks you to remember something, add one tag [REMEMBER:short fact about the user]. Never remember passwords, money or bank details, health information, or anything they ask you not to keep.
+${memoryPrompt()}`
+    : ''
+}`;
 }
 
 export interface AskCallbacks {
