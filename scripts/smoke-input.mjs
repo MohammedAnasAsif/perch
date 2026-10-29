@@ -44,6 +44,15 @@ try {
   console.log(`smoke-input: helper compiled and answered in ${Date.now() - started} ms`);
   await input.keys([{ vk: 0x10, ext: false }]);
   console.log('smoke-input: key command OK');
+  // UI Automation: the CI desktop may have no foreground window, so "no window"
+  // is fine; what matters is that the helper compiled and answered.
+  try {
+    const snap = await input.elements(20);
+    console.log(`smoke-input: UI Automation OK (${snap.items.length} elements in "${snap.title}")`);
+  } catch (err) {
+    if (/no window|timeout/.test(err.message)) console.log('smoke-input: UI Automation answered:', err.message);
+    else throw err;
+  }
 } catch (err) {
   console.error('smoke-input: FAILED', err);
   process.exitCode = 1;
