@@ -28,8 +28,15 @@ module.exports = async (h) => {
     `(() => { const f = document.querySelector('.key-form[data-provider="gemini"]'); f.querySelector('input').value = ${JSON.stringify(KEY)}; f.requestSubmit(); return true })()`,
   );
   await h.waitFor(() => h.exec(p, `document.getElementById('onboard').hidden`), 5000, 'onboarding to finish');
-  const ready = await h.exec(p, `document.getElementById('status').textContent`);
-  h.check(/Ready/.test(ready), 'status says Ready', ready);
+  // The speech model may still be downloading on a fresh install; a user would wait for it.
+  const statusText = () => h.exec(p, `document.getElementById('status').textContent`);
+  const firstStatus = await statusText();
+  h.check(!/Choose your AI/.test(firstStatus), 'status no longer asks to choose an AI', firstStatus);
+  let ready = firstStatus;
+  try {
+    await h.waitFor(async () => /Ready/.test((ready = await statusText())), 90000, 'status to say Ready');
+  } catch {}
+  h.check(/Ready/.test(ready), 'status says Ready once speech recognition has loaded', ready);
   const keyState = await h.exec(p, `document.getElementById('gemini-key-state').textContent`);
   h.check(/Saved securely/.test(keyState), 'panel confirms the key is saved securely', keyState);
   const keyBox = await h.exec(p, `document.querySelector('.key-form[data-provider="gemini"] input').value`);
