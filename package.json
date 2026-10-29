@@ -1,0 +1,63 @@
+{
+  "name": "perch",
+  "productName": "Perch",
+  "version": "0.1.0",
+  "description": "An open-source AI buddy for Windows that lives next to your cursor, sees your screen, talks with you and points at things.",
+  "main": "dist/main.js",
+  "license": "MIT",
+  "author": "Perch contributors",
+  "private": true,
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "watch": "node scripts/build.mjs --watch",
+    "typecheck": "tsc --noEmit",
+    "start": "npm run build && electron .",
+    "dev": "npm run build && electron . --dev",
+    "dist": "npm run typecheck && npm run build && electron-builder --win --x64",
+    "test": "node scripts/test.mjs"
+  },
+  "dependencies": {
+    "uiohook-napi": "^1.5.5"
+  },
+  "devDependencies": {
+    "@anthropic-ai/sdk": "^1.3.0",
+    "@huggingface/transformers": "^4.3.2",
+    "@types/node": "^22.20.5",
+    "electron": "^45.1.0",
+    "electron-builder": "^26.18.0",
+    "esbuild": "^0.28.2",
+    "typescript": "^5.9.3"
+  },
+  "build": {
+    "appId": "dev.perch.app",
+    "productName": "Perch",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "!dist/**/*.map",
+      "package.json"
+    ],
+    "win": {
+      "target": [
+        "nsis"
+      ],
+      "icon": "assets/icon.ico"
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "artifactName": "Perch-Setup-${version}.${ext}"
+    },
+    "publish": null,
+    "npmRebuild": false,
+    "asarUnpack": [
+      "node_modules/uiohook-napi/**"
+    ]
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/MohammedAnasAsif/WinClicky.git"
+  }
+}

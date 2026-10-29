@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'"
+    />
+    <title>Perch</title>
+    <link rel="stylesheet" href="panel.css" />
+  </head>
+  <body>
+    <header class="top">
+      <div class="mark" aria-hidden="true"><span></span><span></span></div>
+      <div class="titles">
+        <h1>Perch</h1>
+        <p id="status" class="status">Starting…</p>
+      </div>
+      <button id="close" class="icon-btn" title="Close" aria-label="Close">
+        <svg viewBox="0 0 16 16" width="14" height="14"><path d="M3.5 3.5l9 9m0-9l-9 9" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" /></svg>
+      </button>
+    </header>
+
+    <main>
+      <!-- Shown until an API key is saved -->
+      <section id="onboard" class="card onboard" hidden>
+        <h2>Add your Claude API key</h2>
+        <p>Perch uses Claude to understand your screen. Your key is encrypted and stored only on this PC.</p>
+        <form id="onboard-form" class="row">
+          <input id="onboard-key" type="password" placeholder="sk-ant-…" autocomplete="off" spellcheck="false" aria-label="Claude API key" />
+          <button class="primary" type="submit">Save</button>
+        </form>
+        <p class="hint"><a href="#" data-url="https://platform.claude.com/">Get a key from the Claude Console</a></p>
+        <p id="onboard-error" class="error" hidden></p>
+      </section>
+
+      <form id="ask-form" class="ask">
+        <input id="ask" type="text" placeholder="Or type a question about your screen…" autocomplete="off" aria-label="Ask Perch" />
+        <button type="submit" class="icon-btn send" title="Ask" aria-label="Ask">
+          <svg viewBox="0 0 16 16" width="15" height="15"><path d="M2.5 8h10m-4-4.5L13 8l-4.5 4.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" /></svg>
+        </button>
+      </form>
+
+      <section id="last" class="card last" hidden>
+        <p class="who">You</p>
+        <p id="last-q" class="q"></p>
+        <p class="who">Perch</p>
+        <p id="last-a" class="a"></p>
+      </section>
+
+      <h3 class="section-title">Claude</h3>
+      <section class="card list">
+        <div class="item">
+          <div class="label"><span>API key</span><small id="key-state">Not set</small></div>
+          <div class="controls">
+            <button id="key-change" class="subtle">Change</button>
+            <button id="key-remove" class="subtle danger" hidden>Remove</button>
+          </div>
+        </div>
+        <form id="key-form" class="item sub" hidden>
+          <input id="key-input" type="password" placeholder="sk-ant-…" autocomplete="off" spellcheck="false" aria-label="New API key" />
+          <button class="primary" type="submit">Save</button>
+        </form>
+        <div class="item">
+          <label class="label" for="model"><span>Model</span></label>
+          <select id="model">
+            <option value="claude-sonnet-5-5">Sonnet 5.5 (balanced)</option>
+            <option value="claude-haiku-5-5">Haiku 5.5 (fastest)</option>
+            <option value="claude-opus-5-5">Opus 5.5 (smartest)</option>
+          </select>
+        </div>
+        <div class="item">
+          <div class="label"><span>Thinking</span><small>Higher is smarter but slower</small></div>
+          <div class="segmented" id="effort" role="radiogroup" aria-label="Thinking effort">
+            <button type="button" data-value="low" role="radio">Low</button>
+            <button type="button" data-value="medium" role="radio">Med</button>
+            <button type="button" data-value="high" role="radio">High</button>
+          </div>
+        </div>
+      </section>
+
+      <h3 class="section-title">Voice</h3>
+      <section class="card list">
+        <div class="item">
+          <label class="label" for="hotkey"><span>Push to talk</span><small id="hotkey-note">Hold, speak, release</small></label>
+          <select id="hotkey">
+            <option value="ctrl+alt">Ctrl + Alt</option>
+            <option value="ctrl+win">Ctrl + Win</option>
+            <option value="ctrl+shift">Ctrl + Shift</option>
+          </select>
+        </div>
+        <div class="item">
+          <label class="label" for="stt"><span>Speech recognition</span><small id="stt-state">Runs on this PC</small></label>
+          <select id="stt">
+            <option value="Xenova/whisper-tiny.en">Fastest (English)</option>
+            <option value="Xenova/whisper-base.en">Balanced (English)</option>
+            <option value="Xenova/whisper-small.en">Most accurate (English)</option>
+            <option value="Xenova/whisper-base">Balanced (any language)</option>
+            <option value="Xenova/whisper-small">Accurate (any language)</option>
+          </select>
+        </div>
+        <div class="progress" id="stt-progress" hidden><span></span></div>
+        <div class="item">
+          <label class="label" for="speak"><span>Speak replies</span></label>
+          <input id="speak" type="checkbox" class="toggle" />
+        </div>
+        <div class="item">
+          <label class="label" for="voice"><span>Voice</span></label>
+          <div class="controls">
+            <select id="voice"><option value="">System default</option></select>
+            <button id="test-voice" class="subtle" title="Play a sample">Test</button>
+          </div>
+        </div>
+        <div class="item">
+          <label class="label" for="rate"><span>Speed</span><small id="rate-value">1.0×</small></label>
+          <input id="rate" type="range" min="0.7" max="1.6" step="0.05" />
+        </div>
+      </section>
+
+      <h3 class="section-title">Behaviour</h3>
+      <section class="card list">
+        <div class="item">
+          <label class="label" for="idle"><span>Show buddy when idle</span><small>Otherwise it appears only when you talk</small></label>
+          <input id="idle" type="checkbox" class="toggle" />
+        </div>
+        <div class="item">
+          <label class="label" for="login"><span>Start with Windows</span></label>
+          <input id="login" type="checkbox" class="toggle" />
+        </div>
+      </section>
+    </main>
+
+    <footer>
+      <button id="new-convo" class="subtle">New conversation</button>
+      <span class="spacer"></span>
+      <span id="version" class="version"></span>
+      <button id="quit" class="subtle">Quit</button>
+    </footer>
+
+    <script type="module" src="panel.js"></script>
+  </body>
+</html>
