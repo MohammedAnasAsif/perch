@@ -158,7 +158,9 @@ function addShape(p: PointMsg): { x: number; y: number } {
     el.setAttribute('x2', String(p.x));
     el.setAttribute('y2', String(p.y));
     el.setAttribute('marker-end', 'url(#arrowhead)');
-    perch = { x: s.fromX, y: s.fromY };
+    // Sit just beyond the arrowhead, so the label is next to what the arrow points at.
+    const len = Math.hypot(p.x - s.fromX, p.y - s.fromY) || 1;
+    perch = { x: p.x + ((p.x - s.fromX) / len) * 18, y: p.y + ((p.y - s.fromY) / len) * 18 };
   }
   el.setAttribute('pathLength', '1');
   el.classList.add('shape');

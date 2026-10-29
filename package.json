@@ -1,7 +1,7 @@
 {
   "name": "perch",
   "productName": "Perch",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "description": "An open-source AI buddy for Windows that lives next to your cursor, sees your screen, talks with you and points at things.",
   "main": "dist/main.js",
   "license": "MIT",
