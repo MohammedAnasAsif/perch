@@ -67,3 +67,31 @@ test('agent hand-off tag, whole or split', () => {
   assert.deepEqual(ev, [{ type: 'text', text: 'Sure. ' }, { type: 'agent' }]);
   assert.equal(textOf(run(['[A] is a grade'])), '[A] is a grade');
 });
+
+test('drawing tags: circle, box and arrow', () => {
+  const ev = run(['Here [CIRCLE:100,200,30:Save] and [BOX:10,20,', '300,40:Toolbar] then [ARROW:5,5,50,60:this way] done']);
+  assert.equal(textOf(ev), 'Here  and  then  done');
+  assert.deepEqual(pointsOf(ev), [
+    { x: 100, y: 200, label: 'Save', shape: { kind: 'circle', r: 30 } },
+    { x: 10, y: 20, label: 'Toolbar', shape: { kind: 'box', w: 300, h: 40 } },
+    { x: 50, y: 60, label: 'this way', shape: { kind: 'arrow', fromX: 5, fromY: 5 } },
+  ]);
+});
+
+test('drawing tags with the wrong number of values are dropped', () => {
+  const ev = run(['A [CIRCLE:1,2:x] B [BOX:1,2,3] C']);
+  assert.equal(textOf(ev), 'A  B  C');
+  assert.deepEqual(pointsOf(ev), []);
+});
+
+test('remember and remind tags are pulled out of the text', () => {
+  const ev = run(['Nice to meet you, Anas! [REMEMBER:The user\'s name is Anas] I\'ll remind you. [REMIND:2026-10-29T17:00|Send the', ' report]']);
+  assert.equal(textOf(ev), "Nice to meet you, Anas! I'll remind you. ");
+  assert.deepEqual(
+    ev.filter((e) => e.type === 'remember' || e.type === 'remind'),
+    [
+      { type: 'remember', text: "The user's name is Anas" },
+      { type: 'remind', body: '2026-10-29T17:00|Send the report' },
+    ],
+  );
+});

@@ -13,10 +13,11 @@
     "typecheck": "tsc --noEmit",
     "start": "npm run build && electron .",
     "dev": "npm run build && electron . --dev",
-    "dist": "npm run typecheck && npm run build && electron-builder --win --x64",
+    "dist": "npm run typecheck && npm run build && electron-builder --win --x64 --publish never",
     "test": "node scripts/test.mjs"
   },
   "dependencies": {
+    "electron-updater": "^6.8.11",
     "uiohook-napi": "^1.5.5"
   },
   "devDependencies": {
@@ -50,7 +51,13 @@
       "perMachine": false,
       "artifactName": "Perch-Setup-${version}.${ext}"
     },
-    "publish": null,
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "MohammedAnasAsif",
+        "repo": "perch"
+      }
+    ],
     "npmRebuild": false,
     "asarUnpack": [
       "node_modules/uiohook-napi/**"

@@ -8,6 +8,9 @@
   --card: rgba(18, 20, 27, 0.94);
   --card-edge: rgba(255, 255, 255, 0.09);
   --font: 'Segoe UI Variable Text', 'Segoe UI', system-ui, sans-serif;
+  --ink-draw: #ff4d6d;
+  --hl-stroke: #ffbf00;
+  --hl-fill: rgba(255, 214, 10, 0.16);
 }
 
 html,
@@ -366,4 +369,45 @@ body {
 }
 .state-working .ring {
   border-radius: 50%;
+}
+
+/* ---------------------------------------------------------------- drawings */
+
+.draw {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  pointer-events: none;
+}
+.draw .shape {
+  fill: none;
+  stroke: var(--ink-draw);
+  stroke-width: 4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  filter: drop-shadow(0 1px 3px rgba(0, 0, 0, 0.35));
+  stroke-dasharray: 1;
+  stroke-dashoffset: 1;
+  animation: draw-in 520ms cubic-bezier(0.4, 0, 0.2, 1) forwards;
+  transition: opacity 260ms ease;
+}
+.draw .shape.box {
+  stroke: var(--hl-stroke);
+  fill: var(--hl-fill);
+}
+.draw .shape.fading {
+  opacity: 0;
+}
+@keyframes draw-in {
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .draw .shape {
+    animation: none;
+    stroke-dashoffset: 0;
+  }
 }

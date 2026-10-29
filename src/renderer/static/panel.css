@@ -277,8 +277,9 @@ select {
   padding-right: 6px;
   text-overflow: ellipsis;
 }
-#voice {
-  max-width: 128px;
+#voice,
+#natural-voice {
+  max-width: 150px;
 }
 input:focus-visible,
 select:focus-visible,
@@ -514,4 +515,77 @@ footer {
 
 .segmented.wide button {
   white-space: nowrap;
+}
+
+.update {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+  padding: 10px 12px;
+  border-color: color-mix(in srgb, var(--accent) 35%, transparent);
+  background: linear-gradient(var(--accent-soft), var(--accent-soft)), var(--card);
+}
+.update p {
+  flex: 1;
+  margin: 0;
+}
+.update .primary {
+  height: 30px;
+  white-space: nowrap;
+}
+button.link {
+  border: none;
+  background: none;
+  padding: 0 4px;
+  cursor: pointer;
+}
+button.link:hover {
+  color: var(--accent);
+  text-decoration: underline;
+}
+
+.notes {
+  list-style: none;
+  margin: 0;
+  padding: 0 12px 8px;
+}
+.notes li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 0;
+  border-top: 1px solid var(--line);
+  font-size: 12.5px;
+}
+.notes li:first-child {
+  border-top: none;
+}
+.notes li span {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.notes li small {
+  color: var(--muted);
+  white-space: nowrap;
+}
+.notes li.empty {
+  color: var(--muted);
+  font-style: italic;
+}
+.notes .x {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 15px;
+  line-height: 1;
+}
+.notes .x:hover {
+  background: var(--field);
+  color: var(--danger);
 }

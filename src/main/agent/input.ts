@@ -38,6 +38,14 @@ public static class PerchInput {
   [StructLayout(LayoutKind.Sequential)] struct INPUT { public uint type; public UNION u; }
   [DllImport("user32.dll", SetLastError=true)] static extern uint SendInput(uint n, INPUT[] inputs, int size);
   [DllImport("user32.dll")] static extern bool SetProcessDpiAwarenessContext(IntPtr ctx);
+  [DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();
+  [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
+  public static string ForegroundProcess() {
+    try {
+      uint pid; GetWindowThreadProcessId(GetForegroundWindow(), out pid);
+      return System.Diagnostics.Process.GetProcessById((int)pid).ProcessName;
+    } catch { return ""; }
+  }
   // Per-monitor DPI awareness, so UI Automation reports real (physical) pixels.
   public static void InitDpi() { try { SetProcessDpiAwarenessContext(new IntPtr(-4)); } catch {} }
   const uint MOVE=0x1, LDOWN=0x2, LUP=0x4, RDOWN=0x8, RUP=0x10, WHEEL=0x800, ABS=0x8000, VDESK=0x4000;
@@ -201,6 +209,7 @@ while ($true) {
         if (-not $uia) { throw 'UI Automation is not available on this PC' }
         $payload = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes([PerchUia]::List([int]$p[2])))
       }
+      'fg'     { $payload = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes([PerchInput]::ForegroundProcess() + ' ')) }
       'ping'   { }
       default  { throw "unknown command $($p[1])" }
     }
@@ -323,6 +332,12 @@ export class WindowsInput {
     for (let i = 0; i < chars.length; i += 400) {
       await this.send(`text ${Buffer.from(chars.slice(i, i + 400).join(''), 'utf8').toString('base64')}`);
     }
+  }
+
+  /** Process name of the window in front, e.g. "chrome" or "WindowsTerminal". */
+  async foregroundApp(): Promise<string> {
+    const payload = await this.send('fg');
+    return Buffer.from(payload, 'base64').toString('utf8').trim();
   }
 
   /** Named, visible controls of the foreground window (positions in physical pixels). */

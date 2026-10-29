@@ -36,9 +36,13 @@ jobs:
           path: release/*.exe
           if-no-files-found: error
 
-      - name: Attach installer to release
+      # The installer plus latest.yml / .blockmap, which auto-update reads.
+      - name: Attach installer and update files to release
         if: github.event_name == 'release'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.event.release.tag_name }}
-          files: release/*.exe
+          files: |
+            release/*.exe
+            release/*.exe.blockmap
+            release/latest.yml

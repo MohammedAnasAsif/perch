@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { describe, extractJson, looksLikeActionRequest, needsApproval, parseAgentCommand, parseStep } from '../src/main/agent/actions';
+import { describe, extractJson, formatElements, looksLikeActionRequest, needsApproval, parseAgentCommand, parseStep } from '../src/main/agent/actions';
 import { parseCombo } from '../src/main/agent/keys';
 import { trimHistory } from '../src/main/agent/history';
 import { htmlToText, parseDdgHtml } from '../src/main/agent/web';
@@ -178,4 +178,31 @@ test('looksLikeActionRequest: questions stay in chat', () => {
   ]) {
     assert.equal(looksLikeActionRequest(q), null, q);
   }
+});
+
+test('click_element and type_into parse, describe and need approval when risky', () => {
+  const c = parseStep({ action: { type: 'click_element', id: '3' } }).action;
+  assert.deepEqual(c, { type: 'click_element', id: 3, target: '', button: 'left', double: false, risky: false });
+  const t = parseStep({ action: { type: 'type_into', id: 2, text: 'hello' } }).action;
+  assert.equal((t as any).replace, true);
+  assert.equal(describe({ ...(c as any), target: 'button "Send"' }), 'Click button "Send"');
+  assert.equal(needsApproval({ ...(c as any), target: 'button "Send"' }, 'risky'), true);
+  assert.equal(needsApproval({ ...(c as any), target: 'tab "Inbox"' }, 'risky'), false);
+  assert.throws(() => parseStep({ action: { type: 'click_element' } }), /coordinate|number/);
+});
+
+test('formatElements numbers controls and hides passwords', () => {
+  const out = formatElements({
+    title: 'Inbox - Gmail',
+    app: 'chrome',
+    items: [
+      { t: 'button', n: 'Compose', v: '', p: false },
+      { t: 'edit', n: 'Search mail', v: 'invoice', p: false },
+      { t: 'edit', n: 'Password', v: '', p: true },
+    ],
+  });
+  assert.match(out, /\[1\] button "Compose"/);
+  assert.match(out, /\[2\] edit "Search mail" value="invoice"/);
+  assert.match(out, /\[3\] edit "Password" \(password field: never type here\)/);
+  assert.match(formatElements({ title: 'X', app: 'y', items: [] }), /No named controls/);
 });

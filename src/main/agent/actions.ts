@@ -4,6 +4,8 @@
 export type Action =
   | { type: 'click'; x: number; y: number; target: string; button: 'left' | 'right'; double: boolean; risky: boolean }
   | { type: 'type'; text: string; target: string; risky: boolean }
+  | { type: 'click_element'; id: number; target: string; button: 'left' | 'right'; double: boolean; risky: boolean }
+  | { type: 'type_into'; id: number; text: string; replace: boolean; target: string; risky: boolean }
   | { type: 'key'; keys: string; target: string; risky: boolean }
   | { type: 'scroll'; x: number; y: number; direction: 'up' | 'down'; amount: number }
   | { type: 'open'; target: string }
@@ -12,6 +14,10 @@ export type Action =
   | { type: 'browser_search'; query: string }
   | { type: 'read_webpage'; url: string }
   | { type: 'write_document'; title: string; content: string }
+  | { type: 'copy_to_clipboard'; text: string }
+  | { type: 'read_clipboard' }
+  | { type: 'remember'; fact: string }
+  | { type: 'set_reminder'; when: string; text: string }
   | { type: 'ask_user'; question: string }
   | { type: 'done'; summary: string };
 
@@ -23,7 +29,16 @@ export interface Step {
 }
 
 /** Actions that touch the mouse or keyboard. */
-export const CONTROL_ACTIONS = new Set(['click', 'type', 'key', 'scroll', 'open', 'browser_search']);
+export const CONTROL_ACTIONS = new Set([
+  'click',
+  'click_element',
+  'type',
+  'type_into',
+  'key',
+  'scroll',
+  'open',
+  'browser_search',
+]);
 
 /** Pulls the first complete JSON object out of a reply (models sometimes wrap it in prose or ```). */
 export function extractJson(text: string): unknown {
@@ -76,6 +91,30 @@ export function parseStep(raw: unknown): Step {
         risky: bool(a.risky),
       };
       break;
+    case 'click_element':
+    case 'click_id':
+    case 'press_element':
+      action = {
+        type: 'click_element',
+        id: Math.round(num(a.id ?? a.element)),
+        target: str(a.target ?? a.description, 200),
+        button: a.button === 'right' ? 'right' : 'left',
+        double: bool(a.double),
+        risky: bool(a.risky),
+      };
+      break;
+    case 'type_into':
+    case 'fill':
+      if (typeof a.text !== 'string') throw new Error('"type_into" needs "text".');
+      action = {
+        type: 'type_into',
+        id: Math.round(num(a.id ?? a.element)),
+        text: str(a.text, 5000),
+        replace: a.replace === undefined ? true : bool(a.replace),
+        target: str(a.target, 200),
+        risky: bool(a.risky),
+      };
+      break;
     case 'type':
       if (typeof a.text !== 'string' || !a.text) throw new Error('"type" needs a non-empty "text".');
       action = { type: 'type', text: str(a.text, 5000), target: str(a.target, 200), risky: bool(a.risky) };
@@ -125,6 +164,23 @@ export function parseStep(raw: unknown): Step {
       if (!str(a.content)) throw new Error('"write_document" needs "content".');
       action = { type: 'write_document', title: str(a.title, 120) || 'Perch notes', content: str(a.content, 100_000) };
       break;
+    case 'copy_to_clipboard':
+    case 'copy':
+      if (typeof a.text !== 'string' || !a.text) throw new Error('"copy_to_clipboard" needs "text".');
+      action = { type: 'copy_to_clipboard', text: str(a.text, 100_000) };
+      break;
+    case 'read_clipboard':
+      action = { type: 'read_clipboard' };
+      break;
+    case 'remember':
+      if (!str(a.fact ?? a.text)) throw new Error('"remember" needs a "fact".');
+      action = { type: 'remember', fact: str(a.fact ?? a.text, 300) };
+      break;
+    case 'set_reminder':
+    case 'remind':
+      if (!str(a.when) || !str(a.text)) throw new Error('"set_reminder" needs "when" and "text".');
+      action = { type: 'set_reminder', when: str(a.when, 40), text: str(a.text, 200) };
+      break;
     case 'ask_user':
     case 'ask':
       action = { type: 'ask_user', question: str(a.question ?? a.text, 500) || 'Could you tell me more?' };
@@ -153,7 +209,9 @@ export function needsApproval(action: Action, policy: 'risky' | 'every'): boolea
   if (policy === 'every') return true;
   switch (action.type) {
     case 'click':
+    case 'click_element':
       return action.risky || RISKY_WORDS.test(action.target);
+    case 'type_into':
     case 'type':
       return action.risky || SENSITIVE_TEXT.test(action.target);
     case 'key': {
@@ -173,6 +231,9 @@ export function describe(action: Action): string {
   switch (action.type) {
     case 'click':
       return `${action.double ? 'Double-click' : action.button === 'right' ? 'Right-click' : 'Click'} ${action.target || 'here'}`;
+    case 'click_element':
+      return `${action.double ? 'Double-click' : action.button === 'right' ? 'Right-click' : 'Click'} ${action.target || `item ${action.id}`}`;
+    case 'type_into':
     case 'type':
       return `Type "${action.text.length > 60 ? action.text.slice(0, 57) + '…' : action.text}"${action.target ? ` into ${action.target}` : ''}`;
     case 'key':
@@ -191,6 +252,14 @@ export function describe(action: Action): string {
       return `Read ${safeHost(action.url)}`;
     case 'write_document':
       return `Write "${action.title}"`;
+    case 'copy_to_clipboard':
+      return 'Copy text to your clipboard';
+    case 'read_clipboard':
+      return 'Read your clipboard';
+    case 'remember':
+      return `Remember: ${action.fact}`;
+    case 'set_reminder':
+      return `Set a reminder: ${action.text}`;
     case 'ask_user':
       return 'Ask you something';
     case 'done':
@@ -236,4 +305,15 @@ export function looksLikeActionRequest(text: string): string | null {
   const polite = String.raw`(?:(?:can|could|would|will)\s+you\s+(?:please\s+)?|please\s+|i\s+(?:want|need)\s+you\s+to\s+|go\s+(?:and\s+)?|just\s+)?`;
   const re = new RegExp(`^${polite}(?:${ACTION_VERBS})\\b`, 'i');
   return re.test(t) ? text.trim() : null;
+}
+
+/** Element list as the model sees it: "[3] button "Send"". Pure, for tests. */
+export function formatElements(snap: { title: string; app: string; items: { t: string; n: string; v: string; p: boolean }[] }) {
+  if (!snap.items.length) return `Active window: "${snap.title}" (${snap.app}). No named controls found; use x,y clicks.`;
+  const lines = snap.items.map((it, i) => {
+    const name = it.n.trim() ? `"${it.n.trim()}"` : '(no name)';
+    const extra = it.p ? ' (password field: never type here)' : it.v.trim() ? ` value="${it.v.trim()}"` : '';
+    return `[${i + 1}] ${it.t} ${name}${extra}`;
+  });
+  return `Active window: "${snap.title}" (${snap.app}). Controls you can use with click_element / type_into:\n${lines.join('\n')}`;
 }

@@ -34,7 +34,7 @@ const configs = [
     outdir: out,
     platform: 'node',
     format: 'cjs',
-    external: ['electron', 'uiohook-napi'],
+    external: ['electron', 'uiohook-napi', 'electron-updater'],
   },
   {
     ...common,
@@ -44,6 +44,7 @@ const configs = [
       engine: 'src/renderer/engine.ts',
       'stt-worker': 'src/renderer/stt-worker.ts',
       confirm: 'src/renderer/confirm.ts',
+      'tts-worker': 'src/renderer/tts-worker.ts',
     },
     outdir: join(out, 'renderer'),
     platform: 'browser',

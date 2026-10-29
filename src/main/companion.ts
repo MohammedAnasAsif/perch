@@ -9,6 +9,9 @@ import { Agent } from './agent/agent';
 import { looksLikeActionRequest, parseAgentCommand } from './agent/actions';
 import type { WindowsInput } from './agent/input';
 import { captureCursorDisplay, toDisplayLocal, type Display, type Screenshot } from './capture';
+import { gatherContext } from './context';
+import { remember } from './store';
+import { addReminder } from './reminders';
 import { TagStream, SentenceChunker, cleanForSpeech, type PointTag } from '../shared/stream';
 import type { Overlays } from './windows';
 import type { AppStatus, BuddyState, PointMsg, Settings, SpeakItem, SttStatus } from '../shared/types';
@@ -25,7 +28,10 @@ export interface CompanionDeps {
   input: WindowsInput;
   approve: (text: string, near: { x: number; y: number }, signal: AbortSignal) => Promise<boolean>;
   suppressHotkeys: (ms: number) => void;
+  /** Memory or reminders changed (refresh the panel lists). */
+  onNotesChanged: () => void;
   onStatus: (s: AppStatus) => void;
+  updateStatus: () => AppStatus['update'];
   openPanel: () => void;
   hotkeyAvailable: () => boolean;
   version: string;
@@ -35,6 +41,7 @@ export class Companion {
   private state: BuddyState = 'idle';
   private brain: Brain;
   private stt: SttStatus = { kind: 'idle' };
+  private tts: SttStatus = { kind: 'idle' };
   private lastQuestion = '';
   private lastAnswer = '';
   private error = '';
@@ -74,6 +81,8 @@ export class Companion {
     return {
       state: this.state,
       stt: this.stt,
+      tts: this.tts,
+      update: this.d.updateStatus(),
       provider: this.d.settings().provider,
       keys: this.d.keys(),
       aiReady: this.d.aiReady(),
@@ -86,14 +95,41 @@ export class Companion {
     };
   }
 
+  private announcements: string[] = [];
+
+  /** Says something unprompted (e.g. a reminder) as soon as Perch is free. */
+  announce(text: string) {
+    this.announcements.push(text);
+    this.flushAnnouncements();
+  }
+
+  private flushAnnouncements() {
+    if (!this.announcements.length) return;
+    if (this.state !== 'idle' && this.state !== 'error') return;
+    const text = this.announcements.shift()!;
+    this.lastAnswer = text;
+    this.say(text, true);
+  }
+
+  /** Pushes a fresh status to the panel (e.g. after an update event). */
+  refreshStatus() {
+    this.d.onStatus(this.status());
+  }
+
   private setState(s: BuddyState) {
     this.state = s;
     this.d.overlays.send('overlay:state', { state: s });
     this.d.onStatus(this.status());
+    if (s === 'idle' && this.announcements.length) setTimeout(() => this.flushAnnouncements(), 400);
   }
 
   setSttStatus(s: SttStatus) {
     this.stt = s;
+    this.d.onStatus(this.status());
+  }
+
+  setTtsStatus(s: SttStatus) {
+    this.tts = s;
     this.d.onStatus(this.status());
   }
 
@@ -123,6 +159,30 @@ export class Companion {
       console.error('[perch] capture failed', err);
       return null;
     });
+  }
+
+  /** "Hey Perch" heard. With command=false, Perch listens for the request next. */
+  onWake(text: string, command: boolean) {
+    if (!command) {
+      this.interrupt(false);
+      this.error = '';
+      this.setState('listening');
+      return;
+    }
+    if (!text.trim()) {
+      if (this.state === 'listening') this.setState('idle');
+      return;
+    }
+    this.interrupt(false);
+    this.error = '';
+    this.setState('transcribing');
+    this.shotPromise = captureCursorDisplay().catch(() => null);
+    this.onTranscript(text);
+  }
+
+  /** Woke up but no request followed. */
+  onWakeTimeout() {
+    if (this.state === 'listening') this.setState('idle');
   }
 
   /** Hotkey cancelled (another key was pressed). */
@@ -210,7 +270,10 @@ export class Companion {
       return;
     }
 
-    const shot = await shotPromise;
+    const [shot, extra] = await Promise.all([
+      shotPromise,
+      gatherContext(question, this.d.input, this.d.suppressHotkeys),
+    ]);
     if (turn !== this.turn) return;
     this.shot = shot;
 
@@ -228,6 +291,21 @@ export class Companion {
           handoff = true;
           return;
         }
+        if (ev.type === 'remember') {
+          if (settings.memoryEnabled && remember(ev.text)) {
+            console.log('[perch] remembered:', ev.text);
+            this.d.onNotesChanged();
+          }
+          continue;
+        }
+        if (ev.type === 'remind') {
+          const r = addReminder(ev.body);
+          if (!r.ok) {
+            console.warn('[perch] reminder not set:', r.error, ev.body);
+            display += ` (I couldn't set that reminder: ${r.error}.)`;
+          }
+          continue;
+        }
         if (ev.type === 'point') {
           if (settings.speakReplies) this.pendingPoints.push(ev.point);
           else this.queuePoint(ev.point);
@@ -244,13 +322,13 @@ export class Companion {
           this.pendingPoints = [];
         }
       }
-      this.d.overlays.send('overlay:bubble', { text: display.trim(), done: final });
+      this.d.overlays.send('overlay:bubble', { text: display.replace(/ {2,}/g, ' ').trim(), done: final });
     };
 
     try {
       // Pointing needs to know the model's coordinate convention up front.
       this.space = currentAi(settings).coordSpace;
-      await this.brain.ask(question, shot, {
+      await this.brain.ask(question + extra, shot, {
         onText: (delta) => {
           if (turn !== this.turn || handoff) return;
           const events = tags.push(delta);
@@ -273,7 +351,7 @@ export class Companion {
       });
       if (turn !== this.turn || handoff) return;
       handle(tags.end(), true);
-      this.lastAnswer = display.trim();
+      this.lastAnswer = display.replace(/ {2,}/g, ' ').trim();
       this.streamDone = true;
       if (this.state === 'thinking') this.setState('speaking');
       this.d.onStatus(this.status());
@@ -315,8 +393,13 @@ export class Companion {
       this.d.openPanel();
       return;
     }
-    const display = (await displayPromise) ?? screen.getDisplayNearestPoint(screen.getCursorScreenPoint());
+    const [maybeDisplay, extra] = await Promise.all([
+      displayPromise,
+      gatherContext(question, this.d.input, this.d.suppressHotkeys),
+    ]);
+    const display = maybeDisplay ?? screen.getDisplayNearestPoint(screen.getCursorScreenPoint());
     if (turn !== this.turn) return;
+    task += extra;
 
     const abort = new AbortController();
     this.agentAbort = abort;
@@ -440,9 +523,21 @@ export class Companion {
   private showPoint(p: PointTag) {
     const shot = this.shot;
     if (!shot) return;
-    const px = toShotPixels(shot, this.space, p.x, p.y);
-    const local = toDisplayLocal(shot, px.x, px.y);
+    const toLocal = (x: number, y: number) => {
+      const px = toShotPixels(shot, this.space, x, y);
+      return toDisplayLocal(shot, px.x, px.y);
+    };
+    const local = toLocal(p.x, p.y);
     const msg: PointMsg = { x: local.x, y: local.y, label: p.label };
+    // Sizes scale like coordinates (model space -> screenshot pixels -> display DIPs).
+    const sx = (shot.display.bounds.width / shot.width) * (this.space === 'pixels' ? 1 : shot.width / 1000);
+    const sy = (shot.display.bounds.height / shot.height) * (this.space === 'pixels' ? 1 : shot.height / 1000);
+    if (p.shape?.kind === 'circle') msg.shape = { kind: 'circle', r: Math.max(12, p.shape.r * Math.min(sx, sy)) };
+    if (p.shape?.kind === 'box') msg.shape = { kind: 'box', w: p.shape.w * sx, h: p.shape.h * sy };
+    if (p.shape?.kind === 'arrow') {
+      const from = toLocal(p.shape.fromX, p.shape.fromY);
+      msg.shape = { kind: 'arrow', fromX: from.x, fromY: from.y };
+    }
     for (const [d] of this.d.overlays.entries()) {
       if (d.id === shot.display.id) this.d.overlays.sendTo(d.id, 'overlay:point', msg);
       else this.d.overlays.sendTo(d.id, 'overlay:release');
