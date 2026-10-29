@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'" />
+    <title>Perch wants to</title>
+    <style>
+      :root {
+        --ink: #f1f3f8;
+        --muted: #a2a8b6;
+        --accent: #5a92ff;
+        --danger: #ff8b80;
+        --font: 'Segoe UI Variable Text', 'Segoe UI', system-ui, sans-serif;
+      }
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        background: #17191f;
+        color: var(--ink);
+        font: 13px/1.4 var(--font);
+        -webkit-font-smoothing: antialiased;
+        user-select: none;
+        overflow: hidden;
+      }
+      .wrap {
+        display: flex;
+        flex-direction: column;
+        height: 100%;
+        box-sizing: border-box;
+        padding: 14px 16px;
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        border-radius: 8px;
+        -webkit-app-region: drag;
+      }
+      .head {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        color: var(--muted);
+        font-size: 12px;
+        font-weight: 600;
+      }
+      .dot {
+        width: 12px;
+        height: 12px;
+        border-radius: 2px 50% 50% 50%;
+        background: radial-gradient(circle at 62% 62%, #ffc46b, #f08a24 78%);
+      }
+      #text {
+        flex: 1;
+        margin: 8px 0 12px;
+        font-size: 14px;
+        font-weight: 600;
+        overflow: hidden;
+        display: -webkit-box;
+        -webkit-line-clamp: 3;
+        -webkit-box-orient: vertical;
+        overflow-wrap: anywhere;
+      }
+      .row {
+        display: flex;
+        gap: 8px;
+        justify-content: flex-end;
+        -webkit-app-region: no-drag;
+      }
+      button {
+        height: 32px;
+        padding: 0 16px;
+        border-radius: 7px;
+        font: inherit;
+        font-weight: 600;
+        cursor: pointer;
+      }
+      #stop {
+        background: transparent;
+        color: var(--danger);
+        border: 1px solid rgba(255, 139, 128, 0.4);
+      }
+      #allow {
+        background: var(--accent);
+        color: #0b1430;
+        border: none;
+      }
+      kbd {
+        font: inherit;
+        font-size: 11px;
+        opacity: 0.7;
+        margin-left: 6px;
+      }
+      button:focus-visible {
+        outline: 2px solid #fff;
+        outline-offset: 2px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <div class="head"><span class="dot"></span>Perch wants to</div>
+      <div id="text">…</div>
+      <div class="row">
+        <button id="stop">Stop<kbd>Esc</kbd></button>
+        <button id="allow">Allow<kbd>Enter</kbd></button>
+      </div>
+    </div>
+    <script type="module" src="confirm.js"></script>
+  </body>
+</html>

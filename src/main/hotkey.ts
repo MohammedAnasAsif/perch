@@ -12,6 +12,7 @@ export class Hotkey {
   private hook: any = null;
   available = false;
   private toggledOn = false;
+  private suppressedUntil = 0;
 
   constructor(combo: HotkeyCombo, private ev: PttEvents) {
     this.ptt = new PushToTalk(combo, ev);
@@ -22,8 +23,9 @@ export class Hotkey {
       // Loaded lazily so a missing native binary doesn't crash the app.
       // eslint-disable-next-line @typescript-eslint/no-var-requires
       const { uIOhook } = require('uiohook-napi');
-      uIOhook.on('keydown', (e: { keycode: number }) => this.ptt.keydown(e.keycode));
-      uIOhook.on('keyup', (e: { keycode: number }) => this.ptt.keyup(e.keycode));
+      // While Perch's agent is pressing keys itself, ignore them here.
+      uIOhook.on('keydown', (e: { keycode: number }) => !this.suppressed() && this.ptt.keydown(e.keycode));
+      uIOhook.on('keyup', (e: { keycode: number }) => !this.suppressed() && this.ptt.keyup(e.keycode));
       uIOhook.start();
       this.hook = uIOhook;
       this.available = true;
@@ -36,6 +38,17 @@ export class Hotkey {
         else this.ev.onStop();
       });
     }
+  }
+
+  private suppressed() {
+    if (Date.now() < this.suppressedUntil) return true;
+    return false;
+  }
+
+  /** Ignore keyboard events for a moment (the agent is typing). */
+  suppress(ms: number) {
+    this.suppressedUntil = Math.max(this.suppressedUntil, Date.now() + ms);
+    this.ptt.reset();
   }
 
   setCombo(combo: HotkeyCombo) {

@@ -1,5 +1,6 @@
 // Screenshots of the display the cursor is on.
 import { desktopCapturer, screen, type Display } from 'electron';
+export type { Display };
 
 export interface Screenshot {
   /** base64 JPEG */
@@ -17,9 +18,16 @@ const MAX_LONG_EDGE = 1440;
 
 export async function captureCursorDisplay(): Promise<Screenshot> {
   const point = screen.getCursorScreenPoint();
-  const display = screen.getDisplayNearestPoint(point);
+  return captureDisplay(screen.getDisplayNearestPoint(point));
+}
+
+/** Screenshot of one display (the agent keeps using the display it started on). */
+export async function captureDisplay(target: Display, maxLongEdge = MAX_LONG_EDGE): Promise<Screenshot> {
+  // Use the current geometry in case the display changed since it was picked.
+  const display = screen.getAllDisplays().find((d) => d.id === target.id) ?? screen.getPrimaryDisplay();
+  const point = screen.getCursorScreenPoint();
   const { width: dw, height: dh } = display.bounds;
-  const scale = Math.min(1, MAX_LONG_EDGE / Math.max(dw * display.scaleFactor, dh * display.scaleFactor));
+  const scale = Math.min(1, maxLongEdge / Math.max(dw * display.scaleFactor, dh * display.scaleFactor));
   const thumb = {
     width: Math.round(dw * display.scaleFactor * scale),
     height: Math.round(dh * display.scaleFactor * scale),

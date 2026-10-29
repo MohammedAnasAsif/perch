@@ -43,6 +43,7 @@ const configs = [
       panel: 'src/renderer/panel.ts',
       engine: 'src/renderer/engine.ts',
       'stt-worker': 'src/renderer/stt-worker.ts',
+      confirm: 'src/renderer/confirm.ts',
     },
     outdir: join(out, 'renderer'),
     platform: 'browser',

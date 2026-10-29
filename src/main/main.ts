@@ -3,7 +3,12 @@ import { app, BrowserWindow, ipcMain, Menu, nativeImage, screen, session, shell,
 import { join } from 'node:path';
 import { Companion } from './companion';
 import { Hotkey, FALLBACK_SHORTCUT } from './hotkey';
-import { clearApiKey, getApiKey, getSettings, hasApiKey, setApiKey, updateSettings } from './settings';
+import { clearApiKey, getSettings, hasApiKey, setApiKey, updateSettings, type KeyProvider } from './settings';
+import { aiReady } from './ai';
+import { GEMINI_MODELS } from './ai/gemini';
+import { OLLAMA_SUGGESTED, ollamaStatus } from './ai/ollama';
+import { WindowsInput } from './agent/input';
+import { askApproval, destroyConfirm } from './confirm';
 import {
   createEngineWindow,
   createPanelWindow,
@@ -33,6 +38,7 @@ let companion: Companion;
 let cursorTimer: ReturnType<typeof setInterval> | null = null;
 let paused = false;
 let panelHiddenAt = 0;
+const input = new WindowsInput();
 
 function broadcastStatus(s: AppStatus) {
   if (panel && !panel.isDestroyed()) panel.webContents.send('panel:status', s);
@@ -41,7 +47,7 @@ function broadcastStatus(s: AppStatus) {
 
 function trayTooltip(s: AppStatus) {
   if (paused) return 'Perch (paused)';
-  if (!s.hasApiKey) return 'Perch: add your Claude API key';
+  if (!s.aiReady) return 'Perch: choose your AI in settings';
   if (s.stt.kind === 'loading') return `Perch: downloading speech model (${Math.round(s.stt.progress)}%)`;
   return `Perch: hold ${comboLabel(getSettings())} and talk`;
 }
@@ -135,23 +141,27 @@ function setupIpc() {
     settings: getSettings(),
     status: companion.status(),
     comboLabel: comboLabel(getSettings()),
+    geminiModels: GEMINI_MODELS,
+    ollamaSuggested: OLLAMA_SUGGESTED,
   }));
+  ipcMain.handle('panel:ollama-status', () => ollamaStatus(getSettings().ollamaUrl));
   ipcMain.handle('panel:update-settings', (_e, patch: Partial<Settings>) => {
     const s = updateSettings(patch);
     applySettings(s);
     return { settings: s, comboLabel: comboLabel(s) };
   });
-  ipcMain.handle('panel:set-key', (_e, key: string) => {
+  const keyProvider = (p: unknown): KeyProvider => (p === 'gemini' ? 'gemini' : 'claude');
+  ipcMain.handle('panel:set-key', (_e, provider: string, key: string) => {
     try {
-      setApiKey(String(key ?? ''));
+      setApiKey(keyProvider(provider), String(key ?? ''));
       broadcastStatus(companion.status());
       return { ok: true };
     } catch (err) {
       return { ok: false, error: (err as Error).message };
     }
   });
-  ipcMain.handle('panel:clear-key', () => {
-    clearApiKey();
+  ipcMain.handle('panel:clear-key', (_e, provider: string) => {
+    clearApiKey(keyProvider(provider));
     broadcastStatus(companion.status());
     return { ok: true };
   });
@@ -169,7 +179,7 @@ function setupIpc() {
     });
   });
   ipcMain.on('panel:open-url', (_e, url: string) => {
-    if (/^https:\/\/(console\.anthropic\.com|platform\.claude\.com|github\.com)\//.test(url)) {
+    if (/^https:\/\/(console\.anthropic\.com|platform\.claude\.com|github\.com|aistudio\.google\.com|ollama\.com)\//.test(url)) {
       void shell.openExternal(url);
     }
   });
@@ -207,8 +217,11 @@ app.whenReady().then(() => {
     overlays,
     engine: () => engine,
     settings: getSettings,
-    getKey: getApiKey,
-    hasKey: hasApiKey,
+    aiReady: () => aiReady(),
+    keys: () => ({ claude: hasApiKey('claude'), gemini: hasApiKey('gemini') }),
+    input,
+    approve: askApproval,
+    suppressHotkeys: (ms) => hotkey.suppress(ms),
     onStatus: broadcastStatus,
     openPanel,
     hotkeyAvailable: () => hotkey?.available ?? false,
@@ -246,7 +259,7 @@ app.whenReady().then(() => {
   applySettings(settings);
 
   // First run: help the user add their key.
-  if (!hasApiKey()) setTimeout(openPanel, 800);
+  if (!aiReady()) setTimeout(openPanel, 800);
   if (isDev()) console.log('[perch] running in development mode');
 });
 
@@ -260,5 +273,7 @@ app.on('window-all-closed', () => {
 app.on('before-quit', () => {
   if (cursorTimer) clearInterval(cursorTimer);
   hotkey?.stop();
+  input.dispose();
+  destroyConfirm();
   overlays.destroyAll();
 });

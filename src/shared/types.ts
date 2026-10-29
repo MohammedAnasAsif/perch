@@ -6,7 +6,11 @@ export type BuddyState =
   | 'transcribing'
   | 'thinking'
   | 'speaking'
+  | 'working' // agent mode is running
   | 'error';
+
+export type ProviderId = 'claude' | 'gemini' | 'ollama';
+export type AgentConfirm = 'risky' | 'every';
 
 export type HotkeyCombo = 'ctrl+alt' | 'ctrl+win' | 'ctrl+shift';
 
@@ -20,7 +24,11 @@ export type WhisperModel =
   | 'Xenova/whisper-small';
 
 export interface Settings {
-  model: string;
+  provider: ProviderId;
+  claudeModel: string;
+  geminiModel: string;
+  ollamaModel: string;
+  ollamaUrl: string;
   effort: Effort;
   hotkey: HotkeyCombo;
   whisperModel: WhisperModel;
@@ -29,10 +37,17 @@ export interface Settings {
   speechRate: number; // 0.5 – 2
   showWhenIdle: boolean;
   launchAtLogin: boolean;
+  /** Agent mode may move the mouse and type. */
+  agentControl: boolean;
+  agentConfirm: AgentConfirm;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
-  model: 'claude-sonnet-5-5',
+  provider: 'claude',
+  claudeModel: 'claude-sonnet-5-5',
+  geminiModel: 'gemini-flash-latest',
+  ollamaModel: 'qwen3-vl:8b',
+  ollamaUrl: 'http://127.0.0.1:11434',
   effort: 'low',
   hotkey: 'ctrl+alt',
   whisperModel: 'Xenova/whisper-base.en',
@@ -41,6 +56,8 @@ export const DEFAULT_SETTINGS: Settings = {
   speechRate: 1.05,
   showWhenIdle: true,
   launchAtLogin: false,
+  agentControl: true,
+  agentConfirm: 'risky',
 };
 
 export type SttStatus =
@@ -53,7 +70,13 @@ export type SttStatus =
 export interface AppStatus {
   state: BuddyState;
   stt: SttStatus;
-  hasApiKey: boolean;
+  provider: ProviderId;
+  /** Which providers have a saved key. */
+  keys: Record<'claude' | 'gemini', boolean>;
+  /** The selected AI is set up (has a key, or is local). */
+  aiReady: boolean;
+  /** Agent progress line while working. */
+  agentStep: string;
   hotkeyAvailable: boolean;
   lastQuestion: string;
   lastAnswer: string;

@@ -2,7 +2,7 @@
 // `window.perch` API limited to Perch's own channels.
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron';
 
-const ALLOWED = /^(overlay|engine|panel):[a-z-]+$/;
+const ALLOWED = /^(overlay|engine|panel|confirm):[a-z-]+$/;
 
 function check(channel: string) {
   if (!ALLOWED.test(channel)) throw new Error(`Blocked IPC channel: ${channel}`);

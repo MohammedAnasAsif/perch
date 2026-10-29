@@ -104,12 +104,14 @@ const PILL_TEXT: Partial<Record<BuddyState, string>> = {
   listening: 'Listening',
   transcribing: 'Hmm…',
   thinking: 'Thinking',
+  working: 'Working on it',
 };
+let agentText = '';
 
 function setState(s: BuddyState) {
   state = s;
   buddy.className = buddy.className.replace(/\bstate-\S+/g, '').trim() + ` state-${s}`;
-  const label = PILL_TEXT[s];
+  const label = s === 'working' && agentText ? agentText : PILL_TEXT[s];
   if (label && mode.kind === 'follow') {
     pillText.textContent = label;
     pill.classList.add('show');
@@ -147,7 +149,8 @@ function release() {
   target.classList.remove('show');
   buddy.classList.remove('pointing');
   if (mode.kind === 'follow') return;
-  pill.classList.remove('show');
+  if (state === 'working' && agentText) pillText.textContent = agentText;
+  else pill.classList.remove('show');
   if (!cursor.visible) {
     // Cursor is on another screen: just fade out here.
     mode = { kind: 'follow' };
@@ -168,6 +171,13 @@ perch.on('overlay:bubble', (m: BubbleMsg) => setBubble(m));
 perch.on('overlay:point', (m: PointMsg) => pointAt(m));
 perch.on('overlay:release', () => release());
 perch.on('overlay:level', (level: number) => buddy.style.setProperty('--level', String(level)));
+perch.on('overlay:pill', (m: { text: string }) => {
+  agentText = m.text;
+  if (state === 'working' && mode.kind === 'follow' && agentText) {
+    pillText.textContent = agentText;
+    pill.classList.add('show');
+  }
+});
 perch.on('overlay:settings', (s: { showWhenIdle: boolean }) => (showWhenIdle = s.showWhenIdle));
 perch.on('overlay:visible', (v: boolean) => (paused = !v));
 

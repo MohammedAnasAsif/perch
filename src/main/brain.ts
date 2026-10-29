@@ -1,16 +1,36 @@
-// Talks to Claude: sends the question plus a screenshot, streams the reply back.
-import Anthropic from '@anthropic-ai/sdk';
+// Chat mode: sends the question plus a screenshot to the selected AI and
+// streams the reply back.
+import { currentAi } from './ai';
+import type { ChatMessage, CoordSpace } from './ai/types';
 import type { Screenshot } from './capture';
-import type { Effort } from '../shared/types';
+import { getSettings } from './settings';
 
 const MAX_TURNS_KEPT = 8;
 
-function systemPrompt(shot: Screenshot | null) {
-  const screenPart = shot
-    ? `With each message you get a screenshot of the user's current screen. It is ${shot.width}×${shot.height} pixels, origin at the top-left. The user's mouse cursor is at (${shot.cursor.x}, ${shot.cursor.y}).
+export function coordInstructions(shot: Screenshot, space: CoordSpace): { describe: string; cursor: string } {
+  if (space === 'pixels') {
+    return {
+      describe: `x and y are pixel coordinates in the screenshot (it is ${shot.width}×${shot.height} pixels, origin at the top-left)`,
+      cursor: `(${shot.cursor.x}, ${shot.cursor.y})`,
+    };
+  }
+  const nx = Math.round((shot.cursor.x / shot.width) * 1000);
+  const ny = Math.round((shot.cursor.y / shot.height) * 1000);
+  return {
+    describe:
+      'x and y are positions on a 0–1000 scale relative to the screenshot: x=0 is the left edge and x=1000 the right edge, y=0 is the top and y=1000 the bottom',
+    cursor: `(${nx}, ${ny}) on that 0–1000 scale`,
+  };
+}
 
-You can point at things on the screen. To point, write a tag exactly like [POINT:x,y:short label] where x and y are pixel coordinates in the screenshot. Put the tag right before the sentence that talks about that thing, and Perch will fly over to it while that sentence is spoken. Point whenever showing the location helps (where to click, which button, where an error is). Use at most three points in a reply, and only point at things you can actually see in the screenshot. Never read out coordinates or mention the tag.`
-    : `No screenshot is available for this message, so answer without referring to the screen.`;
+function systemPrompt(shot: Screenshot | null, space: CoordSpace) {
+  let screenPart = 'No screenshot is available for this message, so answer without referring to the screen.';
+  if (shot) {
+    const c = coordInstructions(shot, space);
+    screenPart = `With each message you get a screenshot of the user's current screen. The user's mouse cursor is at ${c.cursor}.
+
+You can point at things on the screen. To point, write a tag exactly like [POINT:x,y:short label], where ${c.describe}. Put the tag right before the sentence that talks about that thing, and Perch will fly over to it while that sentence is spoken. Point whenever showing the location helps (where to click, which button, where an error is). Use at most three points in a reply, and only point at things you can actually see in the screenshot. Never read out coordinates or mention the tag.`;
+  }
 
   return `You are Perch, a friendly AI buddy that sits next to the user's mouse cursor on their Windows PC. The user talks to you by voice (their words were transcribed automatically, so allow for small transcription mistakes).
 
@@ -21,12 +41,8 @@ Your replies are spoken aloud and shown in a small speech bubble, so:
 - Write plain spoken sentences. No markdown, bullet lists, headings, code blocks or emoji. Spell out keyboard shortcuts naturally, like "press Control plus S".
 - If they ask for steps, give one or two steps at a time, then offer to continue.
 - If the request is unclear or the transcription looks garbled, briefly ask them to say it again.
+- If they ask you to actually do something on the computer for them, tell them they can say "agent" before a request to have you do it.
 - Be honest when you can't tell something from the screenshot.`;
-}
-
-interface Turn {
-  role: 'user' | 'assistant';
-  text: string;
 }
 
 export interface AskCallbacks {
@@ -34,10 +50,8 @@ export interface AskCallbacks {
 }
 
 export class Brain {
-  private history: Turn[] = [];
+  private history: { role: 'user' | 'assistant'; text: string }[] = [];
   private controller: AbortController | null = null;
-
-  constructor(private getKey: () => string | null) {}
 
   reset() {
     this.history = [];
@@ -48,80 +62,53 @@ export class Brain {
     this.controller = null;
   }
 
-  async ask(
-    question: string,
-    shot: Screenshot | null,
-    opts: { model: string; effort: Effort },
-    cb: AskCallbacks,
-  ): Promise<string> {
-    const apiKey = this.getKey();
-    if (!apiKey) throw new Error('NO_API_KEY');
+  /** Remembers an exchange that happened elsewhere (e.g. an agent task). */
+  remember(question: string, answer: string) {
+    this.history.push({ role: 'user', text: question }, { role: 'assistant', text: answer || '(done)' });
+    this.trim();
+  }
 
+  private trim() {
+    if (this.history.length > MAX_TURNS_KEPT * 2) this.history = this.history.slice(-MAX_TURNS_KEPT * 2);
+  }
+
+  /** Streams a reply. Resolves with the full text and the coordinate space its tags use. */
+  async ask(question: string, shot: Screenshot | null, cb: AskCallbacks): Promise<{ text: string; space: CoordSpace }> {
     this.abort();
     const controller = new AbortController();
     this.controller = controller;
 
-    const client = new Anthropic({ apiKey, maxRetries: 1, timeout: 60_000 });
-
-    const past: Anthropic.MessageParam[] = this.history.map((t) => ({ role: t.role, content: t.text }));
-    const content: Anthropic.ContentBlockParam[] = [];
-    if (shot) {
-      content.push({
-        type: 'image',
-        source: { type: 'base64', media_type: 'image/jpeg', data: shot.data },
-      });
-    }
-    content.push({ type: 'text', text: question });
-
-    let full = '';
-    const stream = client.messages.stream(
+    const { provider, model, coordSpace } = currentAi();
+    const messages: ChatMessage[] = [
+      ...this.history,
       {
-        model: opts.model,
-        max_tokens: 1024,
-        system: systemPrompt(shot),
-        messages: [...past, { role: 'user', content }],
-        output_config: { effort: opts.effort },
+        role: 'user',
+        text: question,
+        ...(shot ? { image: { data: shot.data, width: shot.width, height: shot.height } } : {}),
       },
-      { signal: controller.signal },
+    ];
+
+    const text = await provider.stream(
+      {
+        system: systemPrompt(shot, coordSpace),
+        messages,
+        model,
+        maxTokens: 1024,
+        signal: controller.signal,
+        effort: getSettings().effort,
+      },
+      cb.onText,
     );
-
-    stream.on('text', (delta: string) => {
-      full += delta;
-      cb.onText(delta);
-    });
-
-    await stream.finalMessage();
     if (this.controller === controller) this.controller = null;
 
-    this.history.push({ role: 'user', text: question }, { role: 'assistant', text: full || '(no reply)' });
-    if (this.history.length > MAX_TURNS_KEPT * 2) {
-      this.history = this.history.slice(-MAX_TURNS_KEPT * 2);
-    }
-    return full;
+    this.history.push({ role: 'user', text: question }, { role: 'assistant', text: text || '(no reply)' });
+    this.trim();
+    return { text, space: coordSpace };
   }
 }
 
-/** Turns API errors into a short sentence the buddy can say. */
-export function friendlyError(err: unknown): string {
-  const e = err as { status?: number; message?: string; name?: string };
-  if (e?.message === 'NO_API_KEY') return 'I need your Claude API key first. Open Perch from the tray to add it.';
-  if (e?.name === 'AbortError' || e?.name === 'APIUserAbortError') return '';
-  switch (e?.status) {
-    case 401:
-      return 'That API key was rejected. Check it in Perch settings.';
-    case 403:
-      return "Your API key doesn't have access to that model.";
-    case 404:
-      return "That model wasn't found. Pick another one in settings.";
-    case 429:
-      return "I'm being rate limited right now. Try again in a moment.";
-    case 529:
-    case 500:
-    case 503:
-      return 'Claude is busy at the moment. Try again shortly.';
-  }
-  if (/fetch failed|ENOTFOUND|ECONNRESET|network/i.test(e?.message ?? '')) {
-    return "I can't reach Claude. Check your internet connection.";
-  }
-  return 'Something went wrong talking to Claude.';
+/** Converts a point from the model's coordinate space to screenshot pixels. */
+export function toShotPixels(shot: Screenshot, space: CoordSpace, x: number, y: number) {
+  if (space === 'pixels') return { x, y };
+  return { x: (x / 1000) * shot.width, y: (y / 1000) * shot.height };
 }

@@ -1,8 +1,14 @@
 // The companion's brain stem: wires hotkey -> microphone -> transcript ->
-// screenshot + Claude -> speech bubble, voice and pointing.
+// screenshot + AI -> speech bubble, voice and pointing. Requests that start
+// with "agent" go to agent mode instead.
 import { screen, type BrowserWindow } from 'electron';
-import { Brain, friendlyError } from './brain';
-import { captureCursorDisplay, toDisplayLocal, type Screenshot } from './capture';
+import { Brain, toShotPixels } from './brain';
+import { currentAi, friendlyAiError } from './ai';
+import type { CoordSpace } from './ai/types';
+import { Agent } from './agent/agent';
+import { parseAgentCommand } from './agent/actions';
+import type { WindowsInput } from './agent/input';
+import { captureCursorDisplay, toDisplayLocal, type Display, type Screenshot } from './capture';
 import { TagStream, SentenceChunker, cleanForSpeech, type PointTag } from '../shared/stream';
 import type { Overlays } from './windows';
 import type { AppStatus, BuddyState, PointMsg, Settings, SpeakItem, SttStatus } from '../shared/types';
@@ -14,8 +20,11 @@ export interface CompanionDeps {
   overlays: Overlays;
   engine: () => BrowserWindow | null;
   settings: () => Settings;
-  getKey: () => string | null;
-  hasKey: () => boolean;
+  aiReady: () => boolean;
+  keys: () => AppStatus['keys'];
+  input: WindowsInput;
+  approve: (text: string, near: { x: number; y: number }, signal: AbortSignal) => Promise<boolean>;
+  suppressHotkeys: (ms: number) => void;
   onStatus: (s: AppStatus) => void;
   openPanel: () => void;
   hotkeyAvailable: () => boolean;
@@ -29,11 +38,15 @@ export class Companion {
   private lastQuestion = '';
   private lastAnswer = '';
   private error = '';
+  private agent: Agent;
+  private agentAbort: AbortController | null = null;
+  private agentStep = '';
 
   // Per-reply state
   private turn = 0;
   private shotPromise: Promise<Screenshot | null> | null = null;
   private shot: Screenshot | null = null;
+  private space: CoordSpace = 'pixels';
   private pendingPoints: PointTag[] = [];
   private pointsBySpeech = new Map<number, PointTag[]>();
   private speechId = 0;
@@ -44,7 +57,15 @@ export class Companion {
   private pointTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(private d: CompanionDeps) {
-    this.brain = new Brain(d.getKey);
+    this.brain = new Brain();
+    this.agent = new Agent({
+      input: d.input,
+      settings: d.settings,
+      onStep: (text) => this.setAgentStep(text),
+      point: (display, p) => this.agentPoint(display, p),
+      approve: d.approve,
+      suppressHotkeys: d.suppressHotkeys,
+    });
   }
 
   // ------------------------------------------------------------ status
@@ -53,7 +74,10 @@ export class Companion {
     return {
       state: this.state,
       stt: this.stt,
-      hasApiKey: this.d.hasKey(),
+      provider: this.d.settings().provider,
+      keys: this.d.keys(),
+      aiReady: this.d.aiReady(),
+      agentStep: this.agentStep,
       hotkeyAvailable: this.d.hotkeyAvailable(),
       lastQuestion: this.lastQuestion,
       lastAnswer: this.lastAnswer,
@@ -119,7 +143,10 @@ export class Companion {
       this.say("I didn't catch that. Hold the keys and try again.", true);
       return;
     }
-    void this.respond(q, this.shotPromise ?? captureCursorDisplay().catch(() => null));
+    const shotPromise = this.shotPromise ?? captureCursorDisplay().catch(() => null);
+    const task = parseAgentCommand(q);
+    if (task) void this.runAgent(q, task, shotPromise.then((s) => s?.display ?? null));
+    else void this.respond(q, shotPromise);
   }
 
   /** Typed question from the panel. */
@@ -133,12 +160,17 @@ export class Companion {
     const shot = new Promise<Screenshot | null>((r) => setTimeout(r, 250)).then(() =>
       captureCursorDisplay().catch(() => null),
     );
-    void this.respond(q, shot);
+    const task = parseAgentCommand(q);
+    if (task) void this.runAgent(q, task, shot.then((s) => s?.display ?? null));
+    else void this.respond(q, shot);
   }
 
   /** Escape or a new question: stop talking, stop thinking. */
   interrupt(goIdle = true) {
     this.brain.abort();
+    this.agentAbort?.abort();
+    this.agentAbort = null;
+    this.setAgentStep('');
     this.engineSend('engine:speak-stop');
     this.speaking.clear();
     this.pointsBySpeech.clear();
@@ -170,8 +202,8 @@ export class Companion {
     this.setState('thinking');
     this.d.overlays.send('overlay:bubble', { text: '', done: false });
 
-    if (!this.d.hasKey()) {
-      this.say('I need your Claude API key first. I opened settings for you.', true);
+    if (!this.d.aiReady()) {
+      this.say(friendlyAiError(new Error('NO_KEY'), settings.provider), true);
       this.d.openPanel();
       return;
     }
@@ -209,18 +241,15 @@ export class Companion {
     };
 
     try {
-      await this.brain.ask(
-        question,
-        shot,
-        { model: settings.model, effort: settings.effort },
-        {
-          onText: (delta) => {
-            if (turn !== this.turn) return;
-            if (this.state === 'thinking') this.setState('speaking');
-            handle(tags.push(delta), false);
-          },
+      // Pointing needs to know the model's coordinate convention up front.
+      this.space = currentAi(settings).coordSpace;
+      await this.brain.ask(question, shot, {
+        onText: (delta) => {
+          if (turn !== this.turn) return;
+          if (this.state === 'thinking') this.setState('speaking');
+          handle(tags.push(delta), false);
         },
-      );
+      });
       if (turn !== this.turn) return;
       handle(tags.end(), true);
       this.lastAnswer = display.trim();
@@ -230,9 +259,73 @@ export class Companion {
       this.maybeFinish();
     } catch (err) {
       if (turn !== this.turn) return;
-      const msg = friendlyError(err);
+      const msg = friendlyAiError(err, settings.provider);
       if (!msg) return; // aborted
-      console.error('[perch] Claude error', err);
+      console.error('[perch] AI error', err);
+      this.fail(msg);
+      if (/API key/.test(msg)) this.d.openPanel();
+    }
+  }
+
+  // ------------------------------------------------------------ agent
+
+  private setAgentStep(text: string) {
+    this.agentStep = text;
+    this.d.overlays.send('overlay:pill', { text });
+    this.d.onStatus(this.status());
+  }
+
+  private agentPoint(display: Display, p: { x: number; y: number; label: string } | null) {
+    for (const [d] of this.d.overlays.entries()) {
+      if (p && d.id === display.id) this.d.overlays.sendTo(d.id, 'overlay:point', p);
+      else this.d.overlays.sendTo(d.id, 'overlay:release');
+    }
+  }
+
+  private async runAgent(question: string, task: string, displayPromise: Promise<Display | null>) {
+    const turn = this.turn;
+    const settings = this.d.settings();
+    this.lastQuestion = question;
+    this.lastAnswer = '';
+    if (!this.d.aiReady()) {
+      this.say(friendlyAiError(new Error('NO_KEY'), settings.provider), true);
+      this.d.openPanel();
+      return;
+    }
+    const display = (await displayPromise) ?? screen.getDisplayNearestPoint(screen.getCursorScreenPoint());
+    if (turn !== this.turn) return;
+
+    const abort = new AbortController();
+    this.agentAbort = abort;
+    this.setState('working');
+    this.setAgentStep('Getting started');
+    this.d.overlays.send('overlay:bubble', { text: '', done: false });
+    if (settings.speakReplies) {
+      this.engineSend('engine:speak', { id: -1, text: 'On it.', voiceName: settings.voiceName, rate: settings.speechRate });
+    }
+
+    try {
+      const result = await this.agent.run(task, display, abort.signal);
+      if (turn !== this.turn) return;
+      this.agentAbort = null;
+      this.setAgentStep('');
+      this.clearPoints();
+      this.lastAnswer = result.summary;
+      this.brain.remember(question, result.summary);
+      this.say(result.summary, true);
+    } catch (err) {
+      if (turn !== this.turn) return;
+      this.agentAbort = null;
+      this.setAgentStep('');
+      this.clearPoints();
+      if ((err as any)?.declined) {
+        this.lastAnswer = 'Stopped at your request.';
+        this.say('Okay, I stopped there.', true);
+        return;
+      }
+      const msg = friendlyAiError(err, settings.provider);
+      if (!msg) return; // stopped with Escape or a new question
+      console.error('[perch] agent error', err);
       this.fail(msg);
     }
   }
@@ -324,7 +417,8 @@ export class Companion {
   private showPoint(p: PointTag) {
     const shot = this.shot;
     if (!shot) return;
-    const local = toDisplayLocal(shot, p.x, p.y);
+    const px = toShotPixels(shot, this.space, p.x, p.y);
+    const local = toDisplayLocal(shot, px.x, px.y);
     const msg: PointMsg = { x: local.x, y: local.y, label: p.label };
     for (const [d] of this.d.overlays.entries()) {
       if (d.id === shot.display.id) this.d.overlays.sendTo(d.id, 'overlay:point', msg);

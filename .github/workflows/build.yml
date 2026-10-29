@@ -25,6 +25,8 @@ jobs:
 
       - run: npm ci
       - run: npm test
+      - name: Check the mouse/keyboard helper compiles
+        run: node scripts/smoke-input.mjs
       - run: npm run dist
 
       - name: Upload installer

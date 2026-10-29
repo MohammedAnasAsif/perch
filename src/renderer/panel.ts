@@ -1,11 +1,26 @@
 // Settings and status panel, opened from the tray icon.
 import { perch } from './bridge';
-import type { AppStatus, Settings } from '../shared/types';
+import type { AppStatus, ProviderId, Settings } from '../shared/types';
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
+const $$ = <T extends HTMLElement = HTMLElement>(sel: string) => [...document.querySelectorAll<T>(sel)];
+
+interface ModelOption {
+  id: string;
+  label: string;
+}
+interface OllamaStatus {
+  running: boolean;
+  models: string[];
+  error?: string;
+}
 
 let settings: Settings;
+let status: AppStatus | null = null;
 let comboLabel = 'Ctrl + Alt';
+let geminiModels: ModelOption[] = [];
+let ollamaSuggested: ModelOption[] = [];
+let ollama: OllamaStatus | null = null;
 
 // ------------------------------------------------------------ status
 
@@ -15,27 +30,33 @@ const STATE_TEXT: Record<AppStatus['state'], string> = {
   transcribing: 'Working out what you said…',
   thinking: 'Thinking…',
   speaking: 'Talking',
+  working: 'Agent is working…',
   error: '',
 };
 
 function renderStatus(s: AppStatus) {
-  const status = $('status');
-  let text = STATE_TEXT[s.state];
+  status = s;
+  const el = $('status');
+  let text = s.state === 'working' && s.agentStep ? `Agent: ${s.agentStep}` : STATE_TEXT[s.state];
   if (!text) {
-    if (!s.hasApiKey) text = 'Add your API key to get started';
+    if (!s.aiReady) text = 'Choose your AI to get started';
     else if (s.stt.kind === 'loading') text = `Getting speech recognition ready (${Math.round(s.stt.progress)}%)`;
     else if (s.state === 'error' && s.error) text = s.error;
     else text = `Ready. Hold ${comboLabel} and talk`;
   }
-  status.textContent = text;
-  status.classList.toggle('busy', s.state !== 'idle' && s.state !== 'error');
+  el.textContent = text;
+  el.classList.toggle('busy', s.state !== 'idle' && s.state !== 'error');
 
-  $('onboard').hidden = s.hasApiKey;
-  $('key-state').textContent = s.hasApiKey ? 'Saved securely on this PC' : 'Not set';
-  $('key-change').textContent = s.hasApiKey ? 'Change' : 'Add';
-  $('key-remove').hidden = !s.hasApiKey;
+  $('onboard').hidden = s.aiReady;
 
-  // Speech model status
+  for (const p of ['claude', 'gemini'] as const) {
+    const has = s.keys[p];
+    $(`${p}-key-state`).textContent = has ? 'Saved securely on this PC' : 'Not set';
+    const change = document.querySelector<HTMLElement>(`.key-change[data-provider="${p}"]`)!;
+    change.textContent = has ? 'Change' : 'Add';
+    document.querySelector<HTMLElement>(`.key-remove[data-provider="${p}"]`)!.hidden = !has;
+  }
+
   const sttState = $('stt-state');
   const bar = $('stt-progress');
   if (s.stt.kind === 'loading') {
@@ -45,42 +66,81 @@ function renderStatus(s: AppStatus) {
   } else {
     bar.hidden = true;
     sttState.textContent =
-      s.stt.kind === 'ready'
-        ? 'Ready, runs on this PC'
-        : s.stt.kind === 'error'
-          ? `Couldn't load: ${s.stt.message}`
-          : 'Runs on this PC';
+      s.stt.kind === 'ready' ? 'Ready, runs on this PC' : s.stt.kind === 'error' ? s.stt.message : 'Runs on this PC';
   }
 
-  // Hotkey fallback
   const hk = $<HTMLSelectElement>('hotkey');
   hk.disabled = !s.hotkeyAvailable;
   $('hotkey-note').textContent = s.hotkeyAvailable
     ? 'Hold, speak, release'
     : `Keyboard hook unavailable. Press ${comboLabel} to start and again to stop`;
 
-  // Last exchange
   $('last').hidden = !s.lastQuestion;
   $('last-q').textContent = s.lastQuestion;
-  $('last-a').textContent = s.lastAnswer || (s.state === 'thinking' ? '…' : '');
-
+  $('last-a').textContent = s.lastAnswer || (s.state === 'thinking' || s.state === 'working' ? '…' : '');
   $('version').textContent = `v${s.version}`;
 }
 
 // ------------------------------------------------------------ settings
 
+function setOptions(sel: HTMLSelectElement, opts: ModelOption[], value: string) {
+  sel.length = 0;
+  for (const o of opts) sel.add(new Option(o.label, o.id));
+  if (value && !opts.some((o) => o.id === value)) sel.add(new Option(value, value)); // custom/hand-edited
+  sel.value = value;
+}
+
+function renderOllama() {
+  const state = $('ollama-state');
+  const sel = $<HTMLSelectElement>('ollama-model');
+  const installed = ollama?.models ?? [];
+  if (!ollama) state.textContent = 'Checking…';
+  else if (!ollama.running) state.textContent = 'Not running. Install or start Ollama';
+  else state.textContent = installed.length ? `Running · ${installed.length} model${installed.length > 1 ? 's' : ''} installed` : 'Running · no models yet';
+
+  const opts: ModelOption[] = [
+    ...installed.map((m) => ({ id: m, label: `${m} (installed)` })),
+    ...ollamaSuggested.filter((s) => !installed.includes(s.id)).map((s) => ({ id: s.id, label: `${s.label}, not installed` })),
+  ];
+  setOptions(sel, opts, settings.ollamaModel);
+  const ready = installed.includes(settings.ollamaModel) || installed.includes(`${settings.ollamaModel}:latest`);
+  $('ollama-model-note').textContent = ollama?.running ? (ready ? 'Ready' : 'Not installed yet') : '';
+  $('ollama-cmd').textContent = `ollama pull ${settings.ollamaModel}`;
+  $('ollama-help').hidden = !!(ollama?.running && ready);
+}
+
+async function refreshOllama() {
+  ollama = null;
+  renderOllama();
+  ollama = (await perch.invoke<OllamaStatus>('panel:ollama-status')) ?? { running: false, models: [] };
+  renderOllama();
+}
+
 function renderSettings(s: Settings) {
   settings = s;
-  $<HTMLSelectElement>('model').value = s.model;
-  if ($<HTMLSelectElement>('model').value !== s.model) {
-    // A custom model ID set by hand in settings.json.
-    const o = new Option(s.model, s.model);
-    $<HTMLSelectElement>('model').add(o);
-    $<HTMLSelectElement>('model').value = s.model;
+  for (const b of $$('#provider button')) b.setAttribute('aria-checked', String(b.dataset.value === s.provider));
+  for (const pane of $$('[data-pane]')) pane.hidden = pane.dataset.pane !== s.provider;
+
+  const cm = $<HTMLSelectElement>('claude-model');
+  cm.value = s.claudeModel;
+  if (cm.value !== s.claudeModel) {
+    cm.add(new Option(s.claudeModel, s.claudeModel));
+    cm.value = s.claudeModel;
   }
-  for (const b of $('effort').querySelectorAll('button')) {
-    b.setAttribute('aria-checked', String(b.dataset.value === s.effort));
-  }
+  for (const b of $$('#effort button')) b.setAttribute('aria-checked', String(b.dataset.value === s.effort));
+  setOptions($<HTMLSelectElement>('gemini-model'), geminiModels, s.geminiModel);
+  if (s.provider === 'ollama') renderOllama();
+
+  $<HTMLInputElement>('agent-control').checked = s.agentControl;
+  $<HTMLSelectElement>('agent-confirm').value = s.agentConfirm;
+  $<HTMLSelectElement>('agent-confirm').disabled = !s.agentControl;
+  const note = $('agent-note');
+  note.hidden = s.provider === 'claude' || !s.agentControl;
+  note.textContent =
+    s.provider === 'gemini'
+      ? 'Tip: agent tasks take many steps, so Gemini’s free daily limit can run out quickly. Research-only tasks use fewer.'
+      : 'Tip: local models can be slow and less precise at clicking. Research and writing tasks work best.';
+
   $<HTMLSelectElement>('hotkey').value = s.hotkey;
   $<HTMLSelectElement>('stt').value = s.whisperModel;
   $<HTMLInputElement>('speak').checked = s.speakReplies;
@@ -95,8 +155,15 @@ function renderSettings(s: Settings) {
 
 async function update(patch: Partial<Settings>) {
   const r = await perch.invoke<{ settings: Settings; comboLabel: string }>('panel:update-settings', patch);
+  if (!r) return;
   comboLabel = r.comboLabel;
   renderSettings(r.settings);
+}
+
+async function chooseProvider(p: ProviderId) {
+  await update({ provider: p });
+  if (p === 'ollama') void refreshOllama();
+  if (p !== 'ollama' && !status?.keys[p]) openKeyForm(p);
 }
 
 function fillVoices() {
@@ -113,6 +180,45 @@ function fillVoices() {
   if (settings) sel.value = settings.voiceName;
 }
 
+// ------------------------------------------------------------ keys
+
+function keyForm(p: 'claude' | 'gemini') {
+  return document.querySelector<HTMLFormElement>(`.key-form[data-provider="${p}"]`)!;
+}
+
+function openKeyForm(p: 'claude' | 'gemini') {
+  const f = keyForm(p);
+  f.hidden = false;
+  f.querySelector('input')!.focus();
+}
+
+for (const f of $$<HTMLFormElement>('.key-form')) {
+  const p = f.dataset.provider as 'claude' | 'gemini';
+  f.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const input = f.querySelector('input')!;
+    const r = await perch.invoke<{ ok: boolean; error?: string }>('panel:set-key', p, input.value);
+    if (r?.ok) {
+      input.value = '';
+      f.hidden = true;
+    } else {
+      alert(r?.error ?? 'Could not save the key.');
+    }
+  });
+}
+for (const b of $$('.key-change')) {
+  b.addEventListener('click', () => {
+    const f = keyForm(b.dataset.provider as 'claude' | 'gemini');
+    if (f.hidden) openKeyForm(b.dataset.provider as 'claude' | 'gemini');
+    else f.hidden = true;
+  });
+}
+for (const b of $$('.key-remove')) {
+  b.addEventListener('click', () => {
+    if (confirm('Remove the saved key from this PC?')) void perch.invoke('panel:clear-key', b.dataset.provider);
+  });
+}
+
 // ------------------------------------------------------------ events
 
 $('close').addEventListener('click', () => perch.send('panel:hide'));
@@ -126,49 +232,39 @@ $('ask-form').addEventListener('submit', (e) => {
   input.value = '';
 });
 
-async function saveKey(input: HTMLInputElement, errorEl?: HTMLElement) {
-  const r = await perch.invoke<{ ok: boolean; error?: string }>('panel:set-key', input.value);
-  if (r.ok) {
-    input.value = '';
-    $('key-form').hidden = true;
-    if (errorEl) errorEl.hidden = true;
-  } else if (errorEl) {
-    errorEl.textContent = r.error ?? 'Could not save the key.';
-    errorEl.hidden = false;
-  } else {
-    alert(r.error);
-  }
-}
-
-$('onboard-form').addEventListener('submit', (e) => {
-  e.preventDefault();
-  void saveKey($<HTMLInputElement>('onboard-key'), $('onboard-error'));
-});
-$('key-form').addEventListener('submit', (e) => {
-  e.preventDefault();
-  void saveKey($<HTMLInputElement>('key-input'));
-});
-$('key-change').addEventListener('click', () => {
-  const f = $('key-form');
-  f.hidden = !f.hidden;
-  if (!f.hidden) $<HTMLInputElement>('key-input').focus();
-});
-$('key-remove').addEventListener('click', () => {
-  if (confirm('Remove the saved API key from this PC?')) void perch.invoke('panel:clear-key');
-});
-
-document.querySelectorAll<HTMLAnchorElement>('a[data-url]').forEach((a) =>
+for (const a of $$<HTMLAnchorElement>('a[data-url]')) {
   a.addEventListener('click', (e) => {
     e.preventDefault();
     perch.send('panel:open-url', a.dataset.url);
-  }),
-);
+  });
+}
 
-$('model').addEventListener('change', (e) => update({ model: (e.target as HTMLSelectElement).value }));
+for (const b of $$('.choice')) b.addEventListener('click', () => chooseProvider(b.dataset.provider as ProviderId));
+$('provider').addEventListener('click', (e) => {
+  const v = (e.target as HTMLElement).closest('button')?.dataset.value;
+  if (v) void chooseProvider(v as ProviderId);
+});
+$('claude-model').addEventListener('change', (e) => update({ claudeModel: (e.target as HTMLSelectElement).value }));
+$('gemini-model').addEventListener('change', (e) => update({ geminiModel: (e.target as HTMLSelectElement).value }));
+$('ollama-model').addEventListener('change', (e) => update({ ollamaModel: (e.target as HTMLSelectElement).value }));
+$('ollama-recheck').addEventListener('click', () => refreshOllama());
+$('copy-cmd').addEventListener('click', async () => {
+  try {
+    await navigator.clipboard.writeText($('ollama-cmd').textContent ?? '');
+    $('copy-cmd').textContent = 'Copied';
+    setTimeout(() => ($('copy-cmd').textContent = 'Copy'), 1500);
+  } catch {
+    /* clipboard unavailable */
+  }
+});
 $('effort').addEventListener('click', (e) => {
   const v = (e.target as HTMLElement).closest('button')?.dataset.value;
   if (v) void update({ effort: v as Settings['effort'] });
 });
+$('agent-control').addEventListener('change', (e) => update({ agentControl: (e.target as HTMLInputElement).checked }));
+$('agent-confirm').addEventListener('change', (e) =>
+  update({ agentConfirm: (e.target as HTMLSelectElement).value as Settings['agentConfirm'] }),
+);
 $('hotkey').addEventListener('change', (e) => update({ hotkey: (e.target as HTMLSelectElement).value as Settings['hotkey'] }));
 $('stt').addEventListener('change', (e) =>
   update({ whisperModel: (e.target as HTMLSelectElement).value as Settings['whisperModel'] }),
@@ -188,32 +284,62 @@ $('new-convo').addEventListener('click', () => perch.send('panel:new-conversatio
 $('quit').addEventListener('click', () => perch.send('panel:quit'));
 
 perch.on('panel:status', (s: AppStatus) => renderStatus(s));
+// Re-check Ollama whenever the panel is shown again.
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden && settings?.provider === 'ollama') void refreshOllama();
+});
 
 // ------------------------------------------------------------ init
 
 speechSynthesis.onvoiceschanged = fillVoices;
 (async () => {
-  const init = await perch.invoke<{ settings: Settings; status: AppStatus; comboLabel: string }>('panel:get');
-  if (!init) {
-    // Design preview in a plain browser: panel.html?demo
-    if (location.search.includes('demo')) {
-      const { DEFAULT_SETTINGS } = await import('../shared/types');
-      renderSettings(DEFAULT_SETTINGS);
-      renderStatus({
-        state: 'idle',
-        stt: { kind: 'loading', progress: 42 },
-        hasApiKey: location.search.includes('key'),
-        hotkeyAvailable: true,
-        lastQuestion: location.search.includes('key') ? 'How do I add a page number in Word?' : '',
-        lastAnswer: 'Click the Insert tab at the top, then choose Page Number on the right side of the ribbon.',
-        error: '',
-        version: '0.1.0',
-      });
-    }
-    return;
-  }
+  const init = await perch.invoke<{
+    settings: Settings;
+    status: AppStatus;
+    comboLabel: string;
+    geminiModels: ModelOption[];
+    ollamaSuggested: ModelOption[];
+  }>('panel:get');
+  if (!init) return demo();
   comboLabel = init.comboLabel;
+  geminiModels = init.geminiModels;
+  ollamaSuggested = init.ollamaSuggested;
   renderSettings(init.settings);
   renderStatus(init.status);
   fillVoices();
+  if (init.settings.provider === 'ollama') void refreshOllama();
 })();
+
+/** Design preview in a plain browser: panel.html?demo[&provider=…][&ready] */
+async function demo() {
+  const q = new URLSearchParams(location.search);
+  if (!q.has('demo')) return;
+  const { DEFAULT_SETTINGS } = await import('../shared/types');
+  geminiModels = [
+    { id: 'gemini-flash-latest', label: 'Gemini Flash (latest)' },
+    { id: 'gemini-3.5-flash-lite', label: 'Gemini 3.5 Flash-Lite (higher free limits)' },
+  ];
+  ollamaSuggested = [
+    { id: 'qwen3-vl:8b', label: 'Qwen3-VL 8B (6.2 GB, needs ~16 GB RAM)' },
+    { id: 'qwen3-vl:4b', label: 'Qwen3-VL 4B (3.3 GB, for 8 GB RAM)' },
+  ];
+  const provider = (q.get('provider') as ProviderId) ?? 'gemini';
+  renderSettings({ ...DEFAULT_SETTINGS, provider });
+  if (provider === 'ollama') {
+    ollama = { running: true, models: ['llama3.2:3b'] };
+    renderOllama();
+  }
+  renderStatus({
+    state: q.has('working') ? 'working' : 'idle',
+    agentStep: 'Reading reviews on two sites',
+    stt: { kind: 'ready' },
+    provider,
+    keys: { claude: false, gemini: q.has('ready') },
+    aiReady: q.has('ready'),
+    hotkeyAvailable: true,
+    lastQuestion: q.has('ready') ? 'Agent, compare three budget laptops and write it up' : '',
+    lastAnswer: q.has('ready') ? 'Done. I saved a comparison of three laptops to your Documents and opened it.' : '',
+    error: '',
+    version: '0.2.0',
+  });
+}

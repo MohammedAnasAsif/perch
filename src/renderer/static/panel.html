@@ -22,20 +22,25 @@
     </header>
 
     <main>
-      <!-- Shown until an API key is saved -->
+      <!-- Shown until the chosen AI is set up -->
       <section id="onboard" class="card onboard" hidden>
-        <h2>Add your Claude API key</h2>
-        <p>Perch uses Claude to understand your screen. Your key is encrypted and stored only on this PC.</p>
-        <form id="onboard-form" class="row">
-          <input id="onboard-key" type="password" placeholder="sk-ant-…" autocomplete="off" spellcheck="false" aria-label="Claude API key" />
-          <button class="primary" type="submit">Save</button>
-        </form>
-        <p class="hint"><a href="#" data-url="https://platform.claude.com/">Get a key from the Claude Console</a></p>
-        <p id="onboard-error" class="error" hidden></p>
+        <h2>Choose the AI Perch uses</h2>
+        <p>Two of these are free. You can switch any time below.</p>
+        <div class="choices">
+          <button type="button" class="choice" data-provider="gemini">
+            <strong>Gemini</strong><span>Free key from Google, works on any PC</span>
+          </button>
+          <button type="button" class="choice" data-provider="ollama">
+            <strong>Local (on this PC)</strong><span>Free and private with Ollama; needs a strong PC</span>
+          </button>
+          <button type="button" class="choice" data-provider="claude">
+            <strong>Claude</strong><span>Best quality and agent mode; paid API key</span>
+          </button>
+        </div>
       </section>
 
       <form id="ask-form" class="ask">
-        <input id="ask" type="text" placeholder="Or type a question about your screen…" autocomplete="off" aria-label="Ask Perch" />
+        <input id="ask" type="text" placeholder="Ask about your screen, or start with “agent”…" autocomplete="off" aria-label="Ask Perch" />
         <button type="submit" class="icon-btn send" title="Ask" aria-label="Ask">
           <svg viewBox="0 0 16 16" width="15" height="15"><path d="M2.5 8h10m-4-4.5L13 8l-4.5 4.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" /></svg>
         </button>
@@ -48,35 +53,101 @@
         <p id="last-a" class="a"></p>
       </section>
 
-      <h3 class="section-title">Claude</h3>
+      <h3 class="section-title">AI</h3>
       <section class="card list">
         <div class="item">
-          <div class="label"><span>API key</span><small id="key-state">Not set</small></div>
-          <div class="controls">
-            <button id="key-change" class="subtle">Change</button>
-            <button id="key-remove" class="subtle danger" hidden>Remove</button>
+          <div class="segmented wide" id="provider" role="radiogroup" aria-label="AI provider">
+            <button type="button" data-value="gemini" role="radio">Gemini <em>free</em></button>
+            <button type="button" data-value="ollama" role="radio">Local <em>free</em></button>
+            <button type="button" data-value="claude" role="radio">Claude</button>
           </div>
         </div>
-        <form id="key-form" class="item sub" hidden>
-          <input id="key-input" type="password" placeholder="sk-ant-…" autocomplete="off" spellcheck="false" aria-label="New API key" />
-          <button class="primary" type="submit">Save</button>
-        </form>
+
+        <!-- Claude -->
+        <div data-pane="claude">
+          <div class="item">
+            <div class="label"><span>Claude API key</span><small id="claude-key-state">Not set</small></div>
+            <div class="controls">
+              <button class="subtle key-change" data-provider="claude">Add</button>
+              <button class="subtle danger key-remove" data-provider="claude" hidden>Remove</button>
+            </div>
+          </div>
+          <form class="item sub key-form" data-provider="claude" hidden>
+            <input type="password" placeholder="sk-ant-…" autocomplete="off" spellcheck="false" aria-label="Claude API key" />
+            <button class="primary" type="submit">Save</button>
+          </form>
+          <p class="note"><a href="#" data-url="https://platform.claude.com/settings/keys">Get a key in the Claude Console</a>. Paid per use; pick a workspace when creating it.</p>
+          <div class="item">
+            <label class="label" for="claude-model"><span>Model</span></label>
+            <select id="claude-model">
+              <option value="claude-sonnet-5-5">Sonnet 5.5 (balanced)</option>
+              <option value="claude-haiku-5-5">Haiku 5.5 (fastest, cheapest)</option>
+              <option value="claude-opus-5-5">Opus 5.5 (smartest)</option>
+            </select>
+          </div>
+          <div class="item">
+            <div class="label"><span>Thinking</span><small>Higher is smarter but slower</small></div>
+            <div class="segmented" id="effort" role="radiogroup" aria-label="Thinking effort">
+              <button type="button" data-value="low" role="radio">Low</button>
+              <button type="button" data-value="medium" role="radio">Med</button>
+              <button type="button" data-value="high" role="radio">High</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Gemini -->
+        <div data-pane="gemini" hidden>
+          <div class="item">
+            <div class="label"><span>Gemini API key</span><small id="gemini-key-state">Not set</small></div>
+            <div class="controls">
+              <button class="subtle key-change" data-provider="gemini">Add</button>
+              <button class="subtle danger key-remove" data-provider="gemini" hidden>Remove</button>
+            </div>
+          </div>
+          <form class="item sub key-form" data-provider="gemini" hidden>
+            <input type="password" placeholder="Paste your Gemini key" autocomplete="off" spellcheck="false" aria-label="Gemini API key" />
+            <button class="primary" type="submit">Save</button>
+          </form>
+          <p class="note"><a href="#" data-url="https://aistudio.google.com/apikey">Get a free key in Google AI Studio</a> (no card needed). Free use has daily limits, and Google may use what you send to improve its products, so avoid private screens.</p>
+          <div class="item">
+            <label class="label" for="gemini-model"><span>Model</span></label>
+            <select id="gemini-model"></select>
+          </div>
+        </div>
+
+        <!-- Ollama -->
+        <div data-pane="ollama" hidden>
+          <div class="item">
+            <div class="label"><span>Ollama</span><small id="ollama-state">Checking…</small></div>
+            <button id="ollama-recheck" class="subtle">Check again</button>
+          </div>
+          <div class="item">
+            <label class="label" for="ollama-model"><span>Model</span><small id="ollama-model-note"></small></label>
+            <select id="ollama-model"></select>
+          </div>
+          <div class="note steps" id="ollama-help">
+            <p><b>Set up once:</b> install <a href="#" data-url="https://ollama.com/download">Ollama</a>, then open Command Prompt and run:</p>
+            <div class="cmd"><code id="ollama-cmd">ollama pull qwen3-vl:8b</code><button id="copy-cmd" class="subtle small">Copy</button></div>
+            <p>Use <b>4b</b> instead of 8b if your PC has 8 GB of RAM. Everything stays on your PC.</p>
+          </div>
+        </div>
+      </section>
+
+      <h3 class="section-title">Agent</h3>
+      <section class="card list">
+        <p class="note lead">Start a request with <b>“agent”</b> and Perch will do it for you, e.g. <i>“Agent, find three good laptops under 60,000 rupees and write me a comparison.”</i> Press <b>Esc</b> to stop it.</p>
         <div class="item">
-          <label class="label" for="model"><span>Model</span></label>
-          <select id="model">
-            <option value="claude-sonnet-5-5">Sonnet 5.5 (balanced)</option>
-            <option value="claude-haiku-5-5">Haiku 5.5 (fastest)</option>
-            <option value="claude-opus-5-5">Opus 5.5 (smartest)</option>
+          <label class="label" for="agent-control"><span>Let it use mouse and keyboard</span><small>Off: research and writing only</small></label>
+          <input id="agent-control" type="checkbox" class="toggle" />
+        </div>
+        <div class="item">
+          <label class="label" for="agent-confirm"><span>Ask me before</span></label>
+          <select id="agent-confirm">
+            <option value="risky">Risky actions</option>
+            <option value="every">Every click and key</option>
           </select>
         </div>
-        <div class="item">
-          <div class="label"><span>Thinking</span><small>Higher is smarter but slower</small></div>
-          <div class="segmented" id="effort" role="radiogroup" aria-label="Thinking effort">
-            <button type="button" data-value="low" role="radio">Low</button>
-            <button type="button" data-value="medium" role="radio">Med</button>
-            <button type="button" data-value="high" role="radio">High</button>
-          </div>
-        </div>
+        <p class="note" id="agent-note" hidden></p>
       </section>
 
       <h3 class="section-title">Voice</h3>
