@@ -6,7 +6,7 @@ import { Brain, toShotPixels } from './brain';
 import { currentAi, friendlyAiError } from './ai';
 import type { CoordSpace } from './ai/types';
 import { Agent } from './agent/agent';
-import { parseAgentCommand } from './agent/actions';
+import { looksLikeActionRequest, parseAgentCommand } from './agent/actions';
 import type { WindowsInput } from './agent/input';
 import { captureCursorDisplay, toDisplayLocal, type Display, type Screenshot } from './capture';
 import { TagStream, SentenceChunker, cleanForSpeech, type PointTag } from '../shared/stream';
@@ -144,7 +144,7 @@ export class Companion {
       return;
     }
     const shotPromise = this.shotPromise ?? captureCursorDisplay().catch(() => null);
-    const task = parseAgentCommand(q);
+    const task = parseAgentCommand(q) ?? looksLikeActionRequest(q);
     console.log(`[perch] heard: "${q}" -> ${task ? 'agent' : 'chat'}`);
     if (task) void this.runAgent(q, task, shotPromise.then((s) => s?.display ?? null));
     else void this.respond(q, shotPromise);
@@ -161,7 +161,7 @@ export class Companion {
     const shot = new Promise<Screenshot | null>((r) => setTimeout(r, 250)).then(() =>
       captureCursorDisplay().catch(() => null),
     );
-    const task = parseAgentCommand(q);
+    const task = parseAgentCommand(q) ?? looksLikeActionRequest(q);
     console.log(`[perch] typed: "${q}" -> ${task ? 'agent' : 'chat'}`);
     if (task) void this.runAgent(q, task, shot.then((s) => s?.display ?? null));
     else void this.respond(q, shot);

@@ -220,3 +220,20 @@ export function parseAgentCommand(text: string): string | null {
   const task = m[1].trim();
   return task || null;
 }
+
+// Verbs that ask Perch to act rather than explain. ("find" and "show" are left
+// out: "show me where the save button is" is a pointing question for chat.)
+const ACTION_VERBS =
+  'open|launch|start|search|google|look up|go to|visit|navigate to|click|press|type|write|create|make|draft|compose|play|pause|close|minimi[sz]e|maximi[sz]e|scroll|download|install|uninstall|delete|rename|copy|paste|send|reply|fill|book|order|turn on|turn off|switch to|bring up|pull up';
+
+/**
+ * Plain-English action requests: "open Chrome", "search for clicky",
+ * "can you open a new tab…", "please type…". Questions like "how do I open…"
+ * or "what does this button do" stay in chat. Returns the task or null.
+ */
+export function looksLikeActionRequest(text: string): string | null {
+  const t = text.trim().replace(/^[\s,.!]*(?:(?:hey|ok|okay|so|um|uh|alright|right)[\s,.!]+)*(?:perch[\s,.!]+)?/i, '');
+  const polite = String.raw`(?:(?:can|could|would|will)\s+you\s+(?:please\s+)?|please\s+|i\s+(?:want|need)\s+you\s+to\s+|go\s+(?:and\s+)?|just\s+)?`;
+  const re = new RegExp(`^${polite}(?:${ACTION_VERBS})\\b`, 'i');
+  return re.test(t) ? text.trim() : null;
+}

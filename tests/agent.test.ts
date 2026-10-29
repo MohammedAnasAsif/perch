@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { describe, extractJson, needsApproval, parseAgentCommand, parseStep } from '../src/main/agent/actions';
+import { describe, extractJson, looksLikeActionRequest, needsApproval, parseAgentCommand, parseStep } from '../src/main/agent/actions';
 import { parseCombo } from '../src/main/agent/keys';
 import { trimHistory } from '../src/main/agent/history';
 import { htmlToText, parseDdgHtml } from '../src/main/agent/web';
@@ -151,4 +151,31 @@ test('knownApp maps spoken app names', () => {
 test('browser_search builds a Google URL', () => {
   assert.equal(searchUrl('what is clicky'), 'https://www.google.com/search?q=what%20is%20clicky');
   assert.equal(parseStep({ action: { type: 'browser_search', query: 'clicky' } }).action.type, 'browser_search');
+});
+
+test('looksLikeActionRequest: action requests go to the agent', () => {
+  for (const q of [
+    'Can you search for clicking?',
+    'open a new chrome tab and search for clicky and tell me what clicky does',
+    'Please open Notepad',
+    'Hey Perch, could you please type my address',
+    'go to youtube.com',
+    'Search Google for flights to Delhi',
+    'I want you to write a leave letter',
+  ]) {
+    assert.equal(looksLikeActionRequest(q), q.trim(), q);
+  }
+});
+test('looksLikeActionRequest: questions stay in chat', () => {
+  for (const q of [
+    'How do I open a new tab?',
+    'What does this button do?',
+    'Show me where the save button is',
+    'Where is the search bar',
+    'Is this email safe to open?',
+    'Can you see my screen?',
+    'Why is Chrome so slow',
+  ]) {
+    assert.equal(looksLikeActionRequest(q), null, q);
+  }
 });
