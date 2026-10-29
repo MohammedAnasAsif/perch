@@ -28,6 +28,8 @@ export interface CompanionDeps {
   input: WindowsInput;
   approve: (text: string, near: { x: number; y: number }, signal: AbortSignal) => Promise<boolean>;
   suppressHotkeys: (ms: number) => void;
+  /** Why the window in front is private (no screenshots, no agent), or null. */
+  privacyCheck: () => Promise<string | null>;
   /** Memory or reminders changed (refresh the panel lists). */
   onNotesChanged: () => void;
   onStatus: (s: AppStatus) => void;
@@ -53,6 +55,8 @@ export class Companion {
   private turn = 0;
   private shotPromise: Promise<Screenshot | null> | null = null;
   private shot: Screenshot | null = null;
+  /** Set when the last capture was skipped because a private app was in front. */
+  private privacyNote: string | null = null;
   private space: CoordSpace = 'pixels';
   private pendingPoints: PointTag[] = [];
   private pointsBySpeech = new Map<number, PointTag[]>();
@@ -67,6 +71,7 @@ export class Companion {
     this.brain = new Brain();
     this.agent = new Agent({
       input: d.input,
+      privacyCheck: d.privacyCheck,
       settings: d.settings,
       onStep: (text) => this.setAgentStep(text),
       point: (display, p) => this.agentPoint(display, p),
@@ -138,6 +143,21 @@ export class Companion {
     if (e && !e.isDestroyed()) e.webContents.send(channel, data);
   }
 
+  /** Screenshot of the cursor's screen, unless a private app is in front. */
+  private async safeCapture(): Promise<Screenshot | null> {
+    this.privacyNote = null;
+    const reason = await this.d.privacyCheck().catch(() => null);
+    if (reason) {
+      this.privacyNote = reason;
+      console.log(`[perch] screen not captured: ${reason}`);
+      return null;
+    }
+    return captureCursorDisplay().catch((err) => {
+      console.error('[perch] capture failed', err);
+      return null;
+    });
+  }
+
   // ------------------------------------------------------------ input
 
   /** Hotkey pressed: start listening (interrupting anything in progress). */
@@ -155,10 +175,7 @@ export class Companion {
     this.engineSend('engine:record-stop');
     // Grab the screen while speech is being transcribed. The engine replies
     // with onTranscript().
-    this.shotPromise = captureCursorDisplay().catch((err) => {
-      console.error('[perch] capture failed', err);
-      return null;
-    });
+    this.shotPromise = this.safeCapture();
   }
 
   /** "Hey Perch" heard. With command=false, Perch listens for the request next. */
@@ -176,7 +193,7 @@ export class Companion {
     this.interrupt(false);
     this.error = '';
     this.setState('transcribing');
-    this.shotPromise = captureCursorDisplay().catch(() => null);
+    this.shotPromise = this.safeCapture();
     this.onTranscript(text);
   }
 
@@ -203,7 +220,7 @@ export class Companion {
       this.say("I didn't catch that. Hold the keys and try again.", true);
       return;
     }
-    const shotPromise = this.shotPromise ?? captureCursorDisplay().catch(() => null);
+    const shotPromise = this.shotPromise ?? this.safeCapture();
     const task = parseAgentCommand(q) ?? looksLikeActionRequest(q);
     console.log(`[perch] heard: "${q}" -> ${task ? 'agent' : 'chat'}`);
     if (task) void this.runAgent(q, task, shotPromise.then((s) => s?.display ?? null));
@@ -219,7 +236,7 @@ export class Companion {
     ++this.turn;
     // Give the panel a moment to hide so it isn't in the screenshot.
     const shot = new Promise<Screenshot | null>((r) => setTimeout(r, 250)).then(() =>
-      captureCursorDisplay().catch(() => null),
+      this.safeCapture(),
     );
     const task = parseAgentCommand(q) ?? looksLikeActionRequest(q);
     console.log(`[perch] typed: "${q}" -> ${task ? 'agent' : 'chat'}`);
@@ -276,6 +293,10 @@ export class Companion {
     ]);
     if (turn !== this.turn) return;
     this.shot = shot;
+    const privacy =
+      !shot && this.privacyNote
+        ? `\n\n[Perch did not share the screen because ${this.privacyNote}. Answer without seeing it, and briefly tell the user their screen was kept private.]`
+        : '';
 
     const tags = new TagStream();
     const chunker = new SentenceChunker();
@@ -328,7 +349,7 @@ export class Companion {
     try {
       // Pointing needs to know the model's coordinate convention up front.
       this.space = currentAi(settings).coordSpace;
-      await this.brain.ask(question + extra, shot, {
+      await this.brain.ask(question + extra + privacy, shot, {
         onText: (delta) => {
           if (turn !== this.turn || handoff) return;
           const events = tags.push(delta);

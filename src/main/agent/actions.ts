@@ -1,6 +1,8 @@
 // The agent's action format: each step the AI replies with one JSON object.
 // Pure logic so it can be tested.
 
+import { redactSecrets } from '../../shared/redact';
+
 export type Action =
   | { type: 'click'; x: number; y: number; target: string; button: 'left' | 'right'; double: boolean; risky: boolean }
   | { type: 'type'; text: string; target: string; risky: boolean }
@@ -316,4 +318,21 @@ export function formatElements(snap: { title: string; app: string; items: { t: s
     return `[${i + 1}] ${it.t} ${name}${extra}`;
   });
   return `Active window: "${snap.title}" (${snap.app}). Controls you can use with click_element / type_into:\n${lines.join('\n')}`;
+}
+
+const SECRET_FIELD = /\b(password|passcode|pin|cvv|cvc|otp|one[- ]time|card number|security code|2fa|verification code)\b/i;
+
+/**
+ * Hard safety rule, enforced in code whatever the model says: the agent never
+ * types secrets (card numbers, API keys, passwords) and never types into
+ * password-like fields. Returns why an action is blocked, or null.
+ */
+export function blockedReason(action: Action): string | null {
+  if (action.type !== 'type' && action.type !== 'type_into') return null;
+  const { found } = redactSecrets(action.text);
+  if (found.length) return `I won't type a ${found[0]} for you. Please enter it yourself.`;
+  if (SECRET_FIELD.test(action.target)) {
+    return 'I won\'t type into a password or security field. Please enter it yourself.';
+  }
+  return null;
 }

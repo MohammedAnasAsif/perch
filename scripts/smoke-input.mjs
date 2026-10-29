@@ -44,6 +44,8 @@ try {
   console.log(`smoke-input: helper compiled and answered in ${Date.now() - started} ms`);
   await input.keys([{ vk: 0x10, ext: false }]);
   console.log('smoke-input: key command OK');
+  const fg = await input.foregroundWindow();
+  console.log(`smoke-input: foreground window OK ("${fg.app}")`);
   // UI Automation: the CI desktop may have no foreground window, so "no window"
   // is fine; what matters is that the helper compiled and answered.
   try {

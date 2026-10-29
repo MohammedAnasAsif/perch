@@ -5,6 +5,7 @@ import { app } from 'electron';
 import { appendFileSync, existsSync, mkdirSync, renameSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { format } from 'node:util';
+import { redactSecrets } from '../shared/redact';
 
 const MAX_BYTES = 1_000_000;
 
@@ -18,7 +19,8 @@ export function logFile() {
 
 // Never write secrets: API keys look like sk-ant-…, AIza…, or long tokens.
 function redact(s: string) {
-  return s
+  return redactSecrets(s)
+    .text
     .replace(/sk-ant-[A-Za-z0-9_-]{8,}/g, 'sk-ant-[redacted]')
     .replace(/AIza[0-9A-Za-z_-]{20,}/g, 'AIza[redacted]')
     .replace(/(x-goog-api-key|x-api-key|authorization)["']?\s*[:=]\s*["']?[^\s"',}]+/gi, '$1: [redacted]');

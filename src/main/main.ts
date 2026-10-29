@@ -10,6 +10,10 @@ import { OLLAMA_SUGGESTED, ollamaStatus } from './ai/ollama';
 import { WindowsInput } from './agent/input';
 import { askApproval, destroyConfirm } from './confirm';
 import { installFileLog, logDir } from './log';
+import { handleTrusted, onTrusted, v } from './ipcguard';
+import { maybeRunTestScript } from './testhook';
+import { providers } from './ai';
+import { parsePrivateList, privateReason } from '../shared/privacy';
 import { checkForUpdates, initUpdater, installUpdate, updateStatus } from './updater';
 import { memories } from './store';
 import { deleteReminder, startReminders, stopReminders, upcomingReminders } from './reminders';
@@ -148,87 +152,99 @@ function sendNotes() {
 }
 
 function setupIpc() {
+  // Every listener checks that the message came from the right Perch page and
+  // that its arguments have the expected shape (see ipcguard.ts).
+  const statusShape = (x: unknown) =>
+    v.object(x) && v.oneOf('idle', 'loading', 'ready', 'error')((x as SttStatus).kind);
+  const on = (ch: string, checks: ((x: unknown) => boolean)[], fn: (...a: any[]) => void) => onTrusted(ipcMain, ch, checks, fn);
+  const handle = (ch: string, checks: ((x: unknown) => boolean)[], fn: (...a: any[]) => unknown) =>
+    handleTrusted(ipcMain, ch, checks, fn);
+
   // From the engine (mic, speech recognition, voice).
-  ipcMain.on('engine:transcript', (_e, msg: TranscriptMsg) => companion.onTranscript(msg.text, msg.error));
-  ipcMain.on('engine:level', (_e, level: number) => overlays.send('overlay:level', level));
-  ipcMain.on('engine:wake', (_e, m: { text: string; command: boolean }) => {
+  on(
+    'engine:transcript',
+    [(m) => v.object(m) && v.str(5000)((m as TranscriptMsg).text) && ((m as TranscriptMsg).error === undefined || v.str(500)((m as TranscriptMsg).error))],
+    (msg: TranscriptMsg) => companion.onTranscript(msg.text, msg.error),
+  );
+  on('engine:level', [v.num(0, 1)], (level: number) => overlays.send('overlay:level', level));
+  on('engine:wake', [(m) => v.object(m) && v.str(2000)((m as any).text) && v.bool((m as any).command)], (m: { text: string; command: boolean }) => {
     if (paused) return;
     console.log('[perch] wake word', m.command ? `with request: "${m.text}"` : '(listening for request)');
-    companion.onWake(String(m?.text ?? ''), !!m?.command);
+    companion.onWake(m.text, m.command);
   });
-  ipcMain.on('engine:wake-timeout', () => companion.onWakeTimeout());
-  ipcMain.on('engine:stt-status', (_e, s: SttStatus) => companion.setSttStatus(s));
-  ipcMain.on('engine:tts-status', (_e, s: SttStatus) => {
+  on('engine:wake-timeout', [], () => companion.onWakeTimeout());
+  on('engine:stt-status', [statusShape], (s: SttStatus) => companion.setSttStatus(s));
+  on('engine:tts-status', [statusShape], (s: SttStatus) => {
     if (s.kind !== 'loading') console.log('[perch] natural voice:', JSON.stringify(s));
     companion.setTtsStatus(s);
   });
-  ipcMain.on('engine:utterance-start', (_e, id: number) => companion.onUtteranceStart(id));
-  ipcMain.on('engine:utterance-end', (_e, id: number) => companion.onUtteranceEnd(id));
-  ipcMain.on('engine:log', (_e, ...args: unknown[]) => console.log('[engine]', ...args));
+  on('engine:utterance-start', [v.int(-1, 1e9)], (id: number) => companion.onUtteranceStart(id));
+  on('engine:utterance-end', [v.int(-1, 1e9)], (id: number) => companion.onUtteranceEnd(id));
+  on('engine:log', [], (...args: unknown[]) => console.log('[engine]', ...args.map((a) => String(a).slice(0, 1000)).slice(0, 10)));
 
   // From the panel.
-  ipcMain.handle('panel:get', () => ({
+  handle('panel:get', [], () => ({
     settings: getSettings(),
     status: companion.status(),
     comboLabel: comboLabel(getSettings()),
     geminiModels: GEMINI_MODELS,
     ollamaSuggested: OLLAMA_SUGGESTED,
   }));
-  ipcMain.handle('panel:ollama-status', () => ollamaStatus(getSettings().ollamaUrl));
-  ipcMain.handle('panel:update-settings', (_e, patch: Partial<Settings>) => {
+  handle('panel:ollama-status', [], () => ollamaStatus(getSettings().ollamaUrl));
+  handle('panel:update-settings', [v.object], (patch: Partial<Settings>) => {
     const s = updateSettings(patch);
     applySettings(s);
     return { settings: s, comboLabel: comboLabel(s) };
   });
-  const keyProvider = (p: unknown): KeyProvider => (p === 'gemini' ? 'gemini' : 'claude');
-  ipcMain.handle('panel:set-key', (_e, provider: string, key: string) => {
+  handle('panel:set-key', [v.oneOf('claude', 'gemini'), v.str(500)], (provider: KeyProvider, key: string) => {
     try {
-      setApiKey(keyProvider(provider), String(key ?? ''));
+      setApiKey(provider, key);
       broadcastStatus(companion.status());
       return { ok: true };
     } catch (err) {
       return { ok: false, error: (err as Error).message };
     }
   });
-  ipcMain.handle('panel:clear-key', (_e, provider: string) => {
-    clearApiKey(keyProvider(provider));
+  handle('panel:clear-key', [v.oneOf('claude', 'gemini')], (provider: KeyProvider) => {
+    clearApiKey(provider);
     broadcastStatus(companion.status());
     return { ok: true };
   });
-  ipcMain.on('panel:ask', (_e, text: string) => {
+  on('panel:ask', [v.str(4000)], (text: string) => {
     panel?.hide();
-    companion.askTyped(String(text ?? ''));
+    companion.askTyped(text);
   });
-  ipcMain.on('panel:hide', () => panel?.hide());
-  ipcMain.on('panel:new-conversation', () => companion.resetConversation());
-  ipcMain.on('panel:test-voice', (_e, opts: { voiceName: string; rate: number }) => {
+  on('panel:hide', [], () => panel?.hide());
+  on('panel:new-conversation', [], () => companion.resetConversation());
+  on('panel:test-voice', [(o) => v.object(o) && v.str(200)((o as any).voiceName) && v.num(0.5, 2)((o as any).rate)], (opts: { voiceName: string; rate: number }) => {
     engine?.webContents.send('engine:speak', {
       id: -1,
       text: "Hi, I'm Perch. Hold the keys and ask me anything about your screen.",
-      ...opts,
+      voiceName: opts.voiceName,
+      rate: opts.rate,
     });
   });
-  ipcMain.on('panel:open-url', (_e, url: string) => {
+  on('panel:open-url', [v.str(500)], (url: string) => {
     if (/^https:\/\/(console\.anthropic\.com|platform\.claude\.com|github\.com|aistudio\.google\.com|ollama\.com)\//.test(url)) {
       void shell.openExternal(url);
     }
   });
-  ipcMain.on('panel:quit', () => app.quit());
-  ipcMain.handle('panel:notes-get', () => notes());
-  ipcMain.on('panel:memory-delete', (_e, id: string) => {
-    memories.remove(String(id));
+  on('panel:quit', [], () => app.quit());
+  handle('panel:notes-get', [], () => notes());
+  on('panel:memory-delete', [v.uuid], (id: string) => {
+    memories.remove(id);
     sendNotes();
   });
-  ipcMain.on('panel:memory-clear', () => {
+  on('panel:memory-clear', [], () => {
     memories.clear();
     sendNotes();
   });
-  ipcMain.on('panel:reminder-delete', (_e, id: string) => {
-    deleteReminder(String(id));
+  on('panel:reminder-delete', [v.uuid], (id: string) => {
+    deleteReminder(id);
     sendNotes();
   });
-  ipcMain.on('panel:check-updates', () => void checkForUpdates());
-  ipcMain.on('panel:install-update', () => installUpdate());
+  on('panel:check-updates', [], () => void checkForUpdates());
+  on('panel:install-update', [], () => installUpdate());
 }
 
 function startCursorLoop() {
@@ -267,6 +283,12 @@ app.whenReady().then(() => {
     input,
     approve: askApproval,
     suppressHotkeys: (ms) => hotkey.suppress(ms),
+    privacyCheck: async () => {
+      const s = getSettings();
+      if (!s.privacyGuard) return null;
+      const w = await input.foregroundWindow(); // fails (=> not private) off Windows
+      return privateReason(w, parsePrivateList(s.privateApps));
+    },
     onNotesChanged: () => sendNotes(),
     onStatus: broadcastStatus,
     updateStatus,
@@ -330,6 +352,26 @@ app.whenReady().then(() => {
 
   // First run: help the user add their key.
   if (!aiReady()) setTimeout(openPanel, 800);
+
+  // Development builds only: lets the automated tests drive the real app.
+  maybeRunTestScript(() => ({
+    companion,
+    providers,
+    input,
+    overlays,
+    hotkey,
+    getSettings,
+    updateSettings,
+    applySettings,
+    memories,
+    upcomingReminders,
+    openPanel,
+    panel: () => panel,
+    engine: () => engine,
+    escape: () => {
+      if (companion.currentState() !== 'idle') companion.interrupt();
+    },
+  }));
   if (isDev()) console.log('[perch] running in development mode');
 });
 

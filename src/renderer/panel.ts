@@ -180,6 +180,10 @@ function renderSettings(s: Settings) {
   $('rate-value').textContent = `${s.speechRate.toFixed(2).replace(/0$/, '')}×`;
   $<HTMLInputElement>('idle').checked = s.showWhenIdle;
   $<HTMLInputElement>('login').checked = s.launchAtLogin;
+  $<HTMLInputElement>('privacy-guard').checked = s.privacyGuard;
+  const pa = $<HTMLInputElement>('private-apps');
+  if (document.activeElement !== pa) pa.value = s.privateApps;
+  pa.disabled = !s.privacyGuard;
   $<HTMLSelectElement>('voice').value = s.voiceName;
   $<HTMLSelectElement>('voice').disabled = !s.speakReplies;
   for (const b of $$('#voice-engine button')) b.setAttribute('aria-checked', String(b.dataset.value === s.voiceEngine));
@@ -326,6 +330,8 @@ $('test-voice').addEventListener('click', () =>
 );
 $('idle').addEventListener('change', (e) => update({ showWhenIdle: (e.target as HTMLInputElement).checked }));
 $('login').addEventListener('change', (e) => update({ launchAtLogin: (e.target as HTMLInputElement).checked }));
+$('privacy-guard').addEventListener('change', (e) => update({ privacyGuard: (e.target as HTMLInputElement).checked }));
+$('private-apps').addEventListener('change', (e) => update({ privateApps: (e.target as HTMLInputElement).value.slice(0, 2000) }));
 $('new-convo').addEventListener('click', () => perch.send('panel:new-conversation'));
 $('quit').addEventListener('click', () => perch.send('panel:quit'));
 $('version').addEventListener('click', () => perch.send('panel:check-updates'));

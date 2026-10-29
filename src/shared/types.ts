@@ -47,6 +47,10 @@ export interface Settings {
   /** Agent mode may move the mouse and type. */
   agentControl: boolean;
   agentConfirm: AgentConfirm;
+  /** Don't look at or act in password managers, banking pages, etc. */
+  privacyGuard: boolean;
+  /** Extra private apps or sites, comma-separated. */
+  privateApps: string;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -69,6 +73,8 @@ export const DEFAULT_SETTINGS: Settings = {
   memoryEnabled: true,
   agentControl: true,
   agentConfirm: 'risky',
+  privacyGuard: true,
+  privateApps: '',
 };
 
 export type SttStatus =

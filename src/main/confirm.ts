@@ -2,6 +2,7 @@
 import { BrowserWindow, ipcMain, screen } from 'electron';
 import { join } from 'node:path';
 import { SCHEME } from './windows';
+import { onTrusted, v } from './ipcguard';
 
 const SIZE = { width: 380, height: 168 };
 
@@ -15,7 +16,8 @@ function finish(ok: boolean) {
   p?.(ok);
 }
 
-ipcMain.on('confirm:answer', (_e, ok: boolean) => finish(!!ok));
+// Only the popup itself may answer, and only with true/false.
+onTrusted(ipcMain, 'confirm:answer', [v.bool], (ok: boolean) => finish(ok));
 
 function ensureWindow() {
   if (win && !win.isDestroyed()) return win;
