@@ -1,3 +1,5 @@
+import { guardedFetch } from '../netguard';
+
 // Free web tools for the agent: a search (DuckDuckGo's HTML results page) and a
 // page reader that turns HTML into plain text. No API keys needed.
 
@@ -96,21 +98,13 @@ export function htmlToText(html: string): { title: string; text: string } {
 const MAX_BYTES = 3_000_000;
 
 export async function readWebpage(url: string, signal: AbortSignal, maxChars = 8000) {
-  let u: URL;
-  try {
-    u = new URL(url);
-  } catch {
-    throw new Error('That is not a valid web address.');
-  }
-  if (!/^https?:$/.test(u.protocol)) throw new Error('Only http and https pages can be read.');
-  if (/^(localhost|127\.|10\.|192\.168\.|169\.254\.|\[?::1\]?$)/.test(u.hostname)) {
-    throw new Error('Local network addresses are not allowed.');
-  }
-  const res = await fetch(u, {
+  // Public sites only: every hop (including redirects) is checked, so a page
+  // can't send the agent to the user's router or other local devices.
+  const res = await guardedFetch(url, {
     headers: { 'User-Agent': UA, Accept: 'text/html,application/xhtml+xml,text/plain;q=0.9,*/*;q=0.5' },
-    redirect: 'follow',
     signal: AbortSignal.any([signal, AbortSignal.timeout(20_000)]),
   });
+  const u = new URL(res.url || url);
   if (!res.ok) throw new Error(`The page returned HTTP ${res.status}.`);
   const type = res.headers.get('content-type') ?? '';
   if (!/text|html|xml|json/.test(type)) throw new Error(`That page isn't text (${type || 'unknown type'}).`);

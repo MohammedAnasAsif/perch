@@ -10,6 +10,7 @@ import type { ChatMessage, CoordSpace } from '../ai/types';
 import { coordInstructions, toShotPixels } from '../brain';
 import { captureDisplay, toDisplayLocal, type Display, type Screenshot } from '../capture';
 import {
+  blockedReason,
   CONTROL_ACTIONS,
   describe,
   extractJson,
@@ -23,6 +24,7 @@ import { includesEscape, parseCombo } from './keys';
 import type { UiSnapshot, WindowsInput } from './input';
 import { readWebpage, webSearch } from './web';
 import { trimHistory } from './history';
+import { redactSecrets } from '../../shared/redact';
 import { BUILT_IN, knownApp, searchUrl } from './apps';
 import type { Settings } from '../../shared/types';
 import { memoryPrompt, remember } from '../store';
@@ -34,6 +36,8 @@ const MAX_BAD_REPLIES = 3;
 
 export interface AgentDeps {
   input: WindowsInput;
+  /** Why the window in front is private, or null. The agent never acts there. */
+  privacyCheck(): Promise<string | null>;
   settings: () => Settings;
   /** Progress line for the buddy and panel. */
   onStep(text: string): void;
@@ -166,6 +170,7 @@ export class Agent {
   constructor(private d: AgentDeps) {}
 
   async run(task: string, startDisplay: Display, signal: AbortSignal): Promise<AgentResult> {
+    task = redactSecrets(task).text;
     const settings = this.d.settings();
     const control = settings.agentControl;
     const { provider, model, coordSpace } = currentAi(settings);
@@ -175,7 +180,7 @@ export class Agent {
     if (control) this.d.input.prepare().catch(() => {}); // warm up in parallel
 
     const readUi = async (): Promise<UiSnapshot | null> => {
-      if (!control || process.platform !== 'win32') return null;
+      if (!control) return null; // off Windows the helper fails and we fall back to x,y clicks
       try {
         return await this.d.input.elements();
       } catch (err) {
@@ -185,6 +190,14 @@ export class Agent {
     };
 
     const history: ChatMessage[] = [];
+    const privateStop = async (): Promise<AgentResult | null> => {
+      const reason = control ? await this.d.privacyCheck().catch(() => null) : null;
+      if (!reason) return null;
+      console.warn('[agent] stopped:', reason);
+      return { summary: `I stopped because ${reason}. I don't look at or act in private apps, so please do that part yourself.`, asked: false };
+    };
+    const stopNow = await privateStop();
+    if (stopNow) return stopNow;
     let shot: Screenshot | null = control ? await captureDisplay(startDisplay) : null;
     let ui = await readUi();
     let system = systemPrompt({ control, shot, space: coordSpace, docsDir, memory: settings.memoryEnabled });
@@ -254,6 +267,8 @@ export class Agent {
       const sawScreenChange = CONTROL_ACTIONS.has(a.type) || a.type === 'wait';
       if (control && sawScreenChange) {
         await sleep(a.type === 'open' ? 1500 : 650, signal);
+        const stop = await privateStop();
+        if (stop) return stop;
         shot = await captureDisplay(startDisplay);
         ui = await readUi();
         system = systemPrompt({ control, shot, space: coordSpace, docsDir, memory: settings.memoryEnabled });
@@ -297,11 +312,18 @@ export class Agent {
       }
       if (!a.target) a.target = `${item.t} "${item.n || 'unnamed'}"`;
       // UI Automation reports physical pixels; convert to screen DIPs.
-      const dip = screen.screenToDipPoint({ x: item.x + item.w / 2, y: item.y + item.h / 2 });
+      const center = { x: item.x + item.w / 2, y: item.y + item.h / 2 };
+      const dip = typeof screen.screenToDipPoint === 'function' ? screen.screenToDipPoint(center) : center;
       global = dip;
       const d = screen.getDisplayNearestPoint(dip);
       this.d.point(d, { x: dip.x - d.bounds.x, y: dip.y - d.bounds.y, label: item.n.slice(0, 40) });
       await sleep(380, signal);
+    }
+
+    const blocked = blockedReason(a);
+    if (blocked) {
+      console.warn('[agent] blocked:', blocked);
+      return `Blocked by Perch's safety rules: ${blocked} Use ask_user to have the user do this part.`;
     }
 
     if (needsApproval(a, policy)) {

@@ -43,6 +43,7 @@ export function updateSettings(patch: Partial<Settings>): Settings {
   if (!['natural', 'windows'].includes(next.voiceEngine)) next.voiceEngine = 'natural';
   if (!/^[ab][fm]_[a-z]+$/.test(next.naturalVoice)) next.naturalVoice = 'af_heart';
   if (!/^https?:\/\/[^\s]+$/.test(next.ollamaUrl)) next.ollamaUrl = DEFAULT_SETTINGS.ollamaUrl;
+  next.privateApps = next.privateApps.slice(0, 2000);
   cache = next;
   mkdirSync(dir(), { recursive: true });
   writeFileSync(settingsFile(), JSON.stringify(next, null, 2));

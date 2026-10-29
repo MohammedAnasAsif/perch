@@ -7,7 +7,8 @@ import { AiError, type Provider, type ProviderId } from './types';
 import { getApiKey, getSettings, hasApiKey } from '../settings';
 import type { Settings } from '../../shared/types';
 
-const providers: Record<ProviderId, Provider> = {
+/** Exported so integration tests can substitute a fake AI. */
+export const providers: Record<ProviderId, Provider> = {
   claude: claudeProvider(() => getApiKey('claude')),
   gemini: geminiProvider(() => getApiKey('gemini')),
   ollama: ollamaProvider(() => getSettings().ollamaUrl),

@@ -589,3 +589,8 @@ button.link:hover {
   background: var(--field);
   color: var(--danger);
 }
+
+#private-apps {
+  flex: 1;
+  min-width: 0;
+}

@@ -221,6 +221,18 @@
         <ul id="reminder-list" class="notes"></ul>
       </section>
 
+      <h3 class="section-title">Privacy</h3>
+      <section class="card list">
+        <div class="item">
+          <label class="label" for="privacy-guard"><span>Keep private apps private</span><small>No screenshots or agent actions in password managers, banking or payment pages, and Windows security prompts</small></label>
+          <input id="privacy-guard" type="checkbox" class="toggle" />
+        </div>
+        <div class="item sub">
+          <input id="private-apps" type="text" placeholder="Also keep private, e.g. signal, payroll.mycompany.com" autocomplete="off" spellcheck="false" aria-label="Extra private apps or sites, separated by commas" />
+        </div>
+        <p class="note">Card numbers, passwords, API keys and ID numbers are removed from anything Perch sends to the AI, and the agent will never type them.</p>
+      </section>
+
       <h3 class="section-title">Behaviour</h3>
       <section class="card list">
         <div class="item">

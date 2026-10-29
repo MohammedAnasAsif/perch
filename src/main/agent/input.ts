@@ -40,6 +40,16 @@ public static class PerchInput {
   [DllImport("user32.dll")] static extern bool SetProcessDpiAwarenessContext(IntPtr ctx);
   [DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();
   [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
+  [DllImport("user32.dll", CharSet=CharSet.Unicode)] static extern int GetWindowText(IntPtr h, System.Text.StringBuilder s, int max);
+  // "process<TAB>window title" of the window in front.
+  public static string ForegroundWindow() {
+    try {
+      IntPtr h = GetForegroundWindow();
+      var sb = new System.Text.StringBuilder(512);
+      GetWindowText(h, sb, 512);
+      return ForegroundProcess() + "\t" + sb.ToString();
+    } catch { return ""; }
+  }
   public static string ForegroundProcess() {
     try {
       uint pid; GetWindowThreadProcessId(GetForegroundWindow(), out pid);
@@ -210,6 +220,7 @@ while ($true) {
         $payload = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes([PerchUia]::List([int]$p[2])))
       }
       'fg'     { $payload = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes([PerchInput]::ForegroundProcess() + ' ')) }
+      'fgwin'  { $payload = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes([PerchInput]::ForegroundWindow() + ' ')) }
       'ping'   { }
       default  { throw "unknown command $($p[1])" }
     }
@@ -338,6 +349,13 @@ export class WindowsInput {
   async foregroundApp(): Promise<string> {
     const payload = await this.send('fg');
     return Buffer.from(payload, 'base64').toString('utf8').trim();
+  }
+
+  /** Process name and title of the window in front. */
+  async foregroundWindow(): Promise<{ app: string; title: string }> {
+    const payload = await this.send('fgwin');
+    const [app = '', title = ''] = Buffer.from(payload, 'base64').toString('utf8').trim().split('\t');
+    return { app: app.trim(), title: title.trim() };
   }
 
   /** Named, visible controls of the foreground window (positions in physical pixels). */

@@ -206,3 +206,28 @@ test('formatElements numbers controls and hides passwords', () => {
   assert.match(out, /\[3\] edit "Password" \(password field: never type here\)/);
   assert.match(formatElements({ title: 'X', app: 'y', items: [] }), /No named controls/);
 });
+
+// ---------------------------------------------------------------- security: typing secrets (TDD)
+import { blockedReason } from '../src/main/agent/actions';
+
+test('the agent is blocked from typing card numbers, keys or passwords', () => {
+  const type = (text: string) => parseStep({ action: { type: 'type', text } }).action;
+  assert.match(blockedReason(type('4111 1111 1111 1111')) ?? '', /card number/);
+  assert.match(blockedReason(type('sk-ant-api03-AbCdEf1234567890xyzXYZ')) ?? '', /API key/);
+  assert.match(blockedReason(type('password: hunter2')) ?? '', /password/);
+});
+
+test('the agent may type ordinary text', () => {
+  const type = (text: string) => parseStep({ action: { type: 'type', text } }).action;
+  assert.equal(blockedReason(type('best laptops under 60000 rupees')), null);
+  assert.equal(blockedReason(type('Dear Priya,\nI will be on leave tomorrow.')), null);
+});
+
+test('typing into a password field is blocked even if the text looks harmless', () => {
+  const into = parseStep({ action: { type: 'type', text: 'hunter2', target: 'Password field' } }).action;
+  assert.match(blockedReason(into) ?? '', /password/i);
+});
+
+test('blockedReason only applies to typing', () => {
+  assert.equal(blockedReason(parseStep({ action: { type: 'web_search', query: '4111 1111 1111 1111' } }).action), null);
+});

@@ -1,6 +1,7 @@
 // Chat mode: sends the question plus a screenshot to the selected AI and
 // streams the reply back.
 import { currentAi } from './ai';
+import { redactSecrets } from '../shared/redact';
 import type { ChatMessage, CoordSpace } from './ai/types';
 import type { Screenshot } from './capture';
 import { getSettings } from './settings';
@@ -89,6 +90,10 @@ export class Brain {
 
   /** Streams a reply. Resolves with the full text and the coordinate space its tags use. */
   async ask(question: string, shot: Screenshot | null, cb: AskCallbacks): Promise<{ text: string; space: CoordSpace }> {
+    // Never send secrets (card numbers, keys, passwords) to the AI service.
+    const redacted = redactSecrets(question);
+    if (redacted.found.length) console.log(`[perch] redacted from the request: ${redacted.found.join(', ')}`);
+    question = redacted.text;
     this.abort();
     const controller = new AbortController();
     this.controller = controller;

@@ -1,7 +1,7 @@
 {
   "name": "perch",
   "productName": "Perch",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "An open-source AI buddy for Windows that lives next to your cursor, sees your screen, talks with you and points at things.",
   "main": "dist/main.js",
   "license": "MIT",
@@ -14,7 +14,11 @@
     "start": "npm run build && electron .",
     "dev": "npm run build && electron . --dev",
     "dist": "npm run typecheck && npm run build && electron-builder --win --x64 --publish never",
-    "test": "node scripts/test.mjs"
+    "test": "node scripts/test.mjs",
+    "test:unit": "node scripts/test.mjs",
+    "test:integration": "node scripts/run-e2e.mjs tests/integration",
+    "test:acceptance": "node scripts/run-e2e.mjs tests/acceptance",
+    "test:all": "npm run typecheck && npm run test:unit && npm run build && node scripts/run-e2e.mjs tests/integration --no-build && node scripts/run-e2e.mjs tests/acceptance --no-build"
   },
   "dependencies": {
     "electron-updater": "^6.8.11",
@@ -61,7 +65,16 @@
     "npmRebuild": false,
     "asarUnpack": [
       "node_modules/uiohook-napi/**"
-    ]
+    ],
+    "electronFuses": {
+      "runAsNode": false,
+      "enableCookieEncryption": true,
+      "enableNodeOptionsEnvironmentVariable": false,
+      "enableNodeCliInspectArguments": false,
+      "enableEmbeddedAsarIntegrityValidation": true,
+      "onlyLoadAppFromAsar": true,
+      "grantFileProtocolExtraPrivileges": false
+    }
   },
   "repository": {
     "type": "git",

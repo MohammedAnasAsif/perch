@@ -132,16 +132,20 @@ Click the tray icon to open the panel.
 | Speak replies / Voice / Speed | Uses the voices installed in Windows. More voices: *Settings → Time & language → Speech → Add voices*. |
 | Show buddy when idle | Turn off to only see the buddy while it's listening or talking. |
 | Start with Windows | Launch Perch when you sign in. |
+| Privacy | Keep private apps private (on by default), plus your own list of apps or sites. |
 
 ## Privacy
 
 - **Your voice never leaves your PC.** Speech recognition runs locally (Whisper via [transformers.js](https://github.com/huggingface/transformers.js)).
 - **When you ask something**, Perch sends your transcribed question, one screenshot of the monitor your cursor is on, and the recent conversation text to the AI you chose. With **Local**, that never leaves your PC. Nothing is sent while Perch is idle.
-- In agent mode, web searches go to DuckDuckGo and pages are fetched directly from their sites.
+- **Private apps stay private.** When a password manager, a Windows security prompt, or a banking or payment page is in front, Perch doesn't take a screenshot and the agent stops. Add your own apps or sites under **Privacy → Also keep private**.
+- **Secrets are removed before anything is sent or saved.** Card numbers, Aadhaar and PAN numbers, IBANs, API keys, tokens and passwords are replaced with `[redacted …]` in your questions, copied or selected text, notes and the log.
+- **The agent won't type secrets** or type into password, PIN, OTP or card fields, even if asked.
+- Memory, reminders and API keys are encrypted on disk with your Windows account.
+- In agent mode, web searches go to DuckDuckGo and pages are fetched directly from their sites; Perch refuses to fetch addresses on your own network.
 - Perch's own buddy, bubble and popups are excluded from screenshots.
-- API keys are encrypted on disk and only sent to their own service.
 
-See [Anthropic's](https://www.anthropic.com/legal/privacy) and [Google's](https://ai.google.dev/gemini-api/terms) terms for how each handles API data.
+See [SECURITY.md](SECURITY.md) for the full threat model, and [Anthropic's](https://www.anthropic.com/legal/privacy) and [Google's](https://ai.google.dev/gemini-api/terms) terms for how each handles API data.
 
 ## Troubleshooting
 
@@ -190,11 +194,15 @@ See [Anthropic's](https://www.anthropic.com/legal/privacy) and [Google's](https:
 
 ```powershell
 npm install
-npm run dev        # build and launch with logs
-npm test           # unit tests
-npm run typecheck
-npm run dist       # Windows installer in release/
+npm run dev               # build and launch with logs
+npm test                  # unit tests
+npm run test:integration  # the real app, headless, with a fake AI and fake input
+npm run test:acceptance   # user journeys through the real panel
+npm run test:all          # everything above, plus the type check
+npm run dist              # Windows installer in release/
 ```
+
+Perch is developed test-first. See [docs/TESTING.md](docs/TESTING.md) for how the tests work, and [docs/QA-CHECKLIST.md](docs/QA-CHECKLIST.md) for the checks to do on a real PC before a release.
 
 `overlay.html?demo` and `panel.html?demo` (inside `dist/renderer`) render the UI in a normal browser for design work.
 
