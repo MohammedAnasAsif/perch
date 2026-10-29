@@ -38,8 +38,8 @@ recognition **locally on your PC**, so the only thing you need is a Claude API k
 You need [Node.js 20 or newer](https://nodejs.org) and Git.
 
 ```powershell
-git clone https://github.com/MohammedAnasAsif/WinClicky.git
-cd WinClicky
+git clone https://github.com/MohammedAnasAsif/perch.git
+cd perch
 npm install
 npm start
 ```
