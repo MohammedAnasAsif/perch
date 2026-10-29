@@ -9,6 +9,7 @@ export type Action =
   | { type: 'open'; target: string }
   | { type: 'wait'; seconds: number }
   | { type: 'web_search'; query: string }
+  | { type: 'browser_search'; query: string }
   | { type: 'read_webpage'; url: string }
   | { type: 'write_document'; title: string; content: string }
   | { type: 'ask_user'; question: string }
@@ -22,7 +23,7 @@ export interface Step {
 }
 
 /** Actions that touch the mouse or keyboard. */
-export const CONTROL_ACTIONS = new Set(['click', 'type', 'key', 'scroll', 'open']);
+export const CONTROL_ACTIONS = new Set(['click', 'type', 'key', 'scroll', 'open', 'browser_search']);
 
 /** Pulls the first complete JSON object out of a reply (models sometimes wrap it in prose or ```). */
 export function extractJson(text: string): unknown {
@@ -108,6 +109,11 @@ export function parseStep(raw: unknown): Step {
       if (!str(a.query)) throw new Error('"web_search" needs a "query".');
       action = { type: 'web_search', query: str(a.query, 300) };
       break;
+    case 'browser_search':
+    case 'google':
+      if (!str(a.query)) throw new Error('"browser_search" needs a "query".');
+      action = { type: 'browser_search', query: str(a.query, 300) };
+      break;
     case 'read_webpage':
     case 'read_page':
     case 'fetch':
@@ -179,6 +185,8 @@ export function describe(action: Action): string {
       return 'Wait a moment';
     case 'web_search':
       return `Search the web for "${action.query}"`;
+    case 'browser_search':
+      return `Search Google for "${action.query}" in your browser`;
     case 'read_webpage':
       return `Read ${safeHost(action.url)}`;
     case 'write_document':
@@ -204,7 +212,10 @@ function safeHost(url: string) {
  * Returns the task, or null for a normal question.
  */
 export function parseAgentCommand(text: string): string | null {
-  const m = /^\s*(?:hey\s+|ok(?:ay)?\s+)?(?:(?:perch|birch|purch|porch|perches|pearch)[\s,.:!-]*)?agent\b[\s,.:;!-]*(.*)$/is.exec(text);
+  const m =
+    /^\s*(?:(?:hey|ok|okay|so|um|uh|please|alright|right)[\s,.!]+)*(?:(?:perch|birch|purch|porch|perches|pearch|perj)[\s,.:!-]*)?(?:agents?|a gent|aged)\b[\s,.:;!-]*(.*)$/is.exec(
+      text,
+    );
   if (!m) return null;
   const task = m[1].trim();
   return task || null;

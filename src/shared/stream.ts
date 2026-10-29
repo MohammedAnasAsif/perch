@@ -7,9 +7,14 @@ export interface PointTag {
   label: string;
 }
 
-export type StreamEvent = { type: 'text'; text: string } | { type: 'point'; point: PointTag };
+export type StreamEvent =
+  | { type: 'text'; text: string }
+  | { type: 'point'; point: PointTag }
+  /** The chat model is handing the request to agent mode. */
+  | { type: 'agent' };
 
 const TAG_OPEN = '[POINT:';
+const AGENT_TAG = '[AGENT]';
 // [POINT:x,y:label]  — label optional, coordinates may be decimals.
 const TAG_RE = /^\[POINT:\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*(?::([^\]]*))?\]/;
 const MAX_TAG_LEN = 200;
@@ -44,6 +49,13 @@ export class TagStream {
       text += this.buf.slice(0, i);
       this.buf = this.buf.slice(i);
 
+      if (this.buf.toUpperCase().startsWith(AGENT_TAG)) {
+        if (text) events.push({ type: 'text', text }), (text = '');
+        events.push({ type: 'agent' });
+        this.buf = this.buf.slice(AGENT_TAG.length);
+        continue;
+      }
+
       const m = TAG_RE.exec(this.buf);
       if (m) {
         if (text) events.push({ type: 'text', text }), (text = '');
@@ -60,6 +72,7 @@ export class TagStream {
         !final &&
         this.buf.length < MAX_TAG_LEN &&
         (TAG_OPEN.startsWith(this.buf) ||
+          AGENT_TAG.startsWith(this.buf.toUpperCase()) ||
           (this.buf.startsWith(TAG_OPEN) && !this.buf.includes(']')));
       if (couldBeTag) break;
 
@@ -126,5 +139,5 @@ export function cleanForSpeech(text: string): string {
 
 /** Display text for the speech bubble: the reply with tags removed. */
 export function stripTags(text: string): string {
-  return text.replace(/\[POINT:[^\]]*\]\s?/g, '');
+  return text.replace(/\[POINT:[^\]]*\]\s?/g, '').replace(/\[AGENT\]\s?/gi, '');
 }

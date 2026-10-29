@@ -9,6 +9,7 @@ import { GEMINI_MODELS } from './ai/gemini';
 import { OLLAMA_SUGGESTED, ollamaStatus } from './ai/ollama';
 import { WindowsInput } from './agent/input';
 import { askApproval, destroyConfirm } from './confirm';
+import { installFileLog, logDir } from './log';
 import {
   createEngineWindow,
   createPanelWindow,
@@ -27,6 +28,7 @@ if (!app.requestSingleInstanceLock()) {
 }
 
 app.setAppUserModelId('dev.perch.app');
+installFileLog();
 registerSchemeEarly();
 
 const overlays = new Overlays();
@@ -86,6 +88,7 @@ function buildTrayMenu() {
   return Menu.buildFromTemplate([
     { label: 'Open Perch', click: openPanel },
     { label: 'New conversation', click: () => companion.resetConversation() },
+    { label: 'Open log folder', click: () => void shell.openPath(logDir()) },
     { type: 'separator' },
     {
       label: 'Pause',

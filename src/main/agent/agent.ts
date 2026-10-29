@@ -2,6 +2,7 @@
 // screen (when it may use the mouse and keyboard), replies with one JSON
 // action, Perch carries it out and reports the result, until it's done.
 import { app, shell } from 'electron';
+import { spawn } from 'node:child_process';
 import { mkdirSync, writeFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { currentAi } from '../ai';
@@ -13,6 +14,7 @@ import { includesEscape, parseCombo } from './keys';
 import type { WindowsInput } from './input';
 import { readWebpage, webSearch } from './web';
 import { trimHistory } from './history';
+import { BUILT_IN, knownApp, searchUrl } from './apps';
 import type { Settings } from '../../shared/types';
 
 const MAX_STEPS = 30;
@@ -58,7 +60,8 @@ Screen control (you see a fresh screenshot after each of these):
 - {"type":"type","text":"text to type","target":"which field","risky":false}   (types into the focused field; click the field first; use \\n for Enter)
 - {"type":"key","keys":"ctrl+s","target":"why","risky":false}   (shortcuts and single keys: enter, esc, tab, alt+tab, win, ctrl+l, …)
 - {"type":"scroll","x":X,"y":Y,"direction":"down"|"up","amount":5}
-- {"type":"open","target":"notepad"}   (opens an app by name via the Start menu, or a website if you give a full https:// URL)
+- {"type":"open","target":"chrome"}   (opens an app by name, e.g. chrome, edge, notepad, word, excel, calculator, settings; or a website in a new browser tab if you give a full https:// URL)
+- {"type":"browser_search","query":"…"}   (opens a new tab in the user's browser with Google results for the query, so they can see it)
 - {"type":"wait","seconds":2}
 For x and y, ${c?.describe}.`
     : `
@@ -81,7 +84,10 @@ Finishing:
 - {"type":"done","summary":"1–3 short spoken sentences on what you did and found"}
 
 How to work:
-- Prefer web_search and read_webpage for research instead of driving a browser. Use write_document when the user wants notes, a draft, a list or a summary they can keep.
+- Follow the user's request literally. If they ask you to do something on screen (open Chrome, open a new tab, search in the browser, use a particular app), do it on screen so they can see it.
+- When they just want information found and on-screen work isn't requested, web_search and read_webpage are faster than driving a browser.
+- Use write_document when the user wants notes, a draft, a list or a summary they can keep.
+- To search in the browser so the user sees it, use browser_search (it opens a new tab). To visit a site, use open with its https:// URL. Inside an already open browser: ctrl+t opens a new tab, ctrl+l focuses the address bar.
 - When using the screen, look at the newest screenshot before every action, check that the previous action worked, and fix course if it didn't.
 - Be efficient: you have at most ${MAX_STEPS} steps. Don't repeat a failing action more than twice; try another way or ask the user.
 - The "done" summary is read aloud: plain sentences, no markdown, no URLs.
@@ -102,6 +108,35 @@ function safeFileName(title: string) {
   return base || 'Perch notes';
 }
 
+/** Is this program registered with Windows (App Paths), so `start` can find it? */
+function isRegistered(exe: string): Promise<boolean> {
+  if (process.platform !== 'win32') return Promise.resolve(false);
+  const key = (hive: string) => `${hive}\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\App Paths\\${exe}.exe`;
+  const query = (hive: string) =>
+    new Promise<boolean>((resolve) => {
+      const p = spawn('reg.exe', ['query', key(hive), '/ve'], { windowsHide: true, stdio: 'ignore' });
+      p.on('error', () => resolve(false));
+      p.on('exit', (code) => resolve(code === 0));
+    });
+  return Promise.all([query('HKCU'), query('HKLM')]).then(([a, b]) => a || b);
+}
+
+/** Runs a program the way Win+R would (`start "" chrome`). Only fixed names from apps.ts reach here. */
+function startProgram(cmd: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (process.platform !== 'win32') return reject(new Error('Opening apps only works on Windows.'));
+    const p = spawn('cmd.exe', ['/d', '/c', `start "" ${cmd}`], {
+      windowsHide: true,
+      windowsVerbatimArguments: true,
+      detached: true,
+      stdio: 'ignore',
+    });
+    p.on('error', reject);
+    p.on('exit', (code) => (code === 0 ? resolve() : reject(new Error(`Couldn't start ${cmd} (exit ${code}).`))));
+    p.unref();
+  });
+}
+
 function looksLikeUrl(s: string) {
   return /^https?:\/\/\S+$/i.test(s.trim());
 }
@@ -113,6 +148,7 @@ export class Agent {
     const settings = this.d.settings();
     const control = settings.agentControl;
     const { provider, model, coordSpace } = currentAi(settings);
+    console.log(`[agent] task with ${provider.id}/${model}, control=${control}, confirm=${settings.agentConfirm}:`, task);
     const docsDir = join(app.getPath('documents'), 'Perch');
 
     if (control) this.d.input.prepare().catch(() => {}); // warm up in parallel
@@ -149,6 +185,7 @@ export class Agent {
         step = parseStep(extractJson(reply));
         badReplies = 0;
       } catch (err) {
+        console.warn(`[agent] step ${stepNo}: unusable reply (${(err as Error).message})`, reply.slice(0, 300));
         if (++badReplies > MAX_BAD_REPLIES) {
           return { summary: "Sorry, I got confused and couldn't finish that task.", asked: false };
         }
@@ -162,6 +199,7 @@ export class Agent {
 
       history.push({ role: 'assistant', text: JSON.stringify({ thought: step.thought, say: step.say, action: step.action }) });
       const a = step.action;
+      console.log(`[agent] step ${stepNo}: ${describe(a)}`, a.type === 'type' ? '' : JSON.stringify(a).slice(0, 300));
       this.d.onStep(`${step.say || describe(a)}`);
 
       if (a.type === 'done') return { summary: a.summary, asked: false };
@@ -179,6 +217,7 @@ export class Agent {
         result = `Error: ${(err as Error).message}`;
       }
 
+      console.log(`[agent] step ${stepNo} result:`, result.slice(0, 300));
       // After touching the screen, look again.
       const sawScreenChange = CONTROL_ACTIONS.has(a.type) || a.type === 'wait';
       if (control && sawScreenChange) {
@@ -241,10 +280,16 @@ export class Agent {
         await this.d.input.keys(keys);
         return `Pressed ${a.keys}.`;
       }
-      case 'open':
+      case 'open': {
         if (looksLikeUrl(a.target)) {
           await shell.openExternal(a.target.trim());
-          return `Opened ${a.target} in the default browser.`;
+          return `Opened ${a.target} in a new tab of the default browser.`;
+        }
+        const known = knownApp(a.target);
+        if (known && (/^(https?|ms-[a-z-]+):/.test(known) || BUILT_IN.has(known) || (await isRegistered(known)))) {
+          if (/^[a-z-]+:/.test(known)) await shell.openExternal(known);
+          else await startProgram(known);
+          return `Launched ${a.target}. Check the screen to see it.`;
         }
         this.d.suppressHotkeys(2500);
         await this.d.input.keys(parseCombo('win'));
@@ -253,6 +298,12 @@ export class Agent {
         await sleep(900, signal);
         await this.d.input.keys(parseCombo('enter'));
         return `Searched the Start menu for "${a.target}" and pressed Enter. Check the screen to see whether it opened.`;
+      }
+      case 'browser_search': {
+        const url = searchUrl(a.query);
+        await shell.openExternal(url);
+        return `Opened a new browser tab searching for "${a.query}". Look at the screen to read the results.`;
+      }
       case 'wait':
         await sleep(a.seconds * 1000, signal);
         return `Waited ${a.seconds} seconds.`;

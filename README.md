@@ -77,7 +77,7 @@ Press **Esc** at any time to make Perch stop.
 
 ## Agent mode
 
-Start any request with **"agent"** (or "Perch agent"):
+Ask Perch to *do* something ("open a new Chrome tab and search for…", "write me a note…") and it hands the request to its agent automatically. You can also start with **"agent"** to make sure:
 
 - *"Agent, find three good laptops under 60,000 rupees and write me a comparison."*
 - *"Agent, open Notepad and draft a leave application for tomorrow."*
@@ -127,6 +127,8 @@ See [Anthropic's](https://www.anthropic.com/legal/privacy) and [Google's](https:
 **Nothing happens when I hold Ctrl + Alt**: Some keyboards use AltGr (right Alt) as Ctrl + Alt, and other apps may grab the combo. Try **Ctrl + Win** or **Ctrl + Shift** in the panel. If the panel says the keyboard hook is unavailable, use **Ctrl + Alt + Space** to start and again to stop.
 
 **"I've hit Gemini's free limit"**: Wait until the daily reset, or switch the model to *Flash-Lite*, which has higher free limits.
+
+**The agent didn't do what I asked**: Open the tray menu → **Open log folder** and look at `perch.log` (or attach it to a [GitHub issue](https://github.com/MohammedAnasAsif/perch/issues)). It lists what Perch heard and each step the agent took. API keys are never written to it.
 
 **"I can't reach Ollama"**: Make sure Ollama is running (it starts with Windows after installing) and that you've pulled the model shown in the panel.
 

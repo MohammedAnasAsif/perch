@@ -4,6 +4,7 @@ import { describe, extractJson, needsApproval, parseAgentCommand, parseStep } fr
 import { parseCombo } from '../src/main/agent/keys';
 import { trimHistory } from '../src/main/agent/history';
 import { htmlToText, parseDdgHtml } from '../src/main/agent/web';
+import { knownApp, searchUrl } from '../src/main/agent/apps';
 
 // ---------------------------------------------------------------- trigger
 
@@ -15,9 +16,15 @@ test('agent trigger: "Perch agent" and mishearings', () => {
   assert.equal(parseAgentCommand('Hey Birch, agent: write a poem'), 'write a poem');
   assert.equal(parseAgentCommand('okay perch agent - search flights'), 'search flights');
 });
+test('agent trigger: filler words and mishearings', () => {
+  assert.equal(parseAgentCommand('So agent, open Chrome'), 'open Chrome');
+  assert.equal(parseAgentCommand('Agents, open a new tab'), 'open a new tab');
+  assert.equal(parseAgentCommand('Okay, please agent open notepad'), 'open notepad');
+});
+
 test('agent trigger: normal questions are not agent tasks', () => {
   assert.equal(parseAgentCommand('What does the agent setting do?'), null);
-  assert.equal(parseAgentCommand('agents of shield'), null);
+  assert.equal(parseAgentCommand('What do agents do?'), null);
   assert.equal(parseAgentCommand('agent'), null);
 });
 
@@ -129,4 +136,19 @@ test('htmlToText strips scripts, menus and tags', () => {
   assert.equal(text.includes('evil'), false);
   assert.equal(text.includes('Menu'), false);
   assert.match(text, /Header\nPara one\.\n• A\n• B/);
+});
+
+test('knownApp maps spoken app names', () => {
+  assert.equal(knownApp('Chrome'), 'chrome');
+  assert.equal(knownApp('google chrome'), 'chrome');
+  assert.equal(knownApp('Microsoft Edge'), 'msedge');
+  assert.equal(knownApp('calculator'), 'calc');
+  assert.equal(knownApp('File Explorer'), 'explorer');
+  assert.equal(knownApp('settings'), 'ms-settings:');
+  assert.equal(knownApp('Some Random Game'), null);
+});
+
+test('browser_search builds a Google URL', () => {
+  assert.equal(searchUrl('what is clicky'), 'https://www.google.com/search?q=what%20is%20clicky');
+  assert.equal(parseStep({ action: { type: 'browser_search', query: 'clicky' } }).action.type, 'browser_search');
 });

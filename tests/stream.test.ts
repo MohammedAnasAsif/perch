@@ -59,3 +59,11 @@ test('sentence chunker splits on newlines', () => {
 test('cleanForSpeech strips markdown and urls', () => {
   assert.equal(cleanForSpeech('**Open** `File` at https://x.com/a 🎉'), 'Open File at the link');
 });
+
+test('agent hand-off tag, whole or split', () => {
+  assert.deepEqual(run(['[AGENT]']), [{ type: 'agent' }]);
+  assert.deepEqual(run(['[AG', 'ENT', ']']), [{ type: 'agent' }]);
+  const ev = run(['Sure. ', '[agent]']);
+  assert.deepEqual(ev, [{ type: 'text', text: 'Sure. ' }, { type: 'agent' }]);
+  assert.equal(textOf(run(['[A] is a grade'])), '[A] is a grade');
+});

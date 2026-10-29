@@ -145,6 +145,7 @@ export class Companion {
     }
     const shotPromise = this.shotPromise ?? captureCursorDisplay().catch(() => null);
     const task = parseAgentCommand(q);
+    console.log(`[perch] heard: "${q}" -> ${task ? 'agent' : 'chat'}`);
     if (task) void this.runAgent(q, task, shotPromise.then((s) => s?.display ?? null));
     else void this.respond(q, shotPromise);
   }
@@ -161,6 +162,7 @@ export class Companion {
       captureCursorDisplay().catch(() => null),
     );
     const task = parseAgentCommand(q);
+    console.log(`[perch] typed: "${q}" -> ${task ? 'agent' : 'chat'}`);
     if (task) void this.runAgent(q, task, shot.then((s) => s?.display ?? null));
     else void this.respond(q, shot);
   }
@@ -215,12 +217,17 @@ export class Companion {
     const tags = new TagStream();
     const chunker = new SentenceChunker();
     let display = '';
+    let handoff = false;
     this.streamDone = false;
     this.speaking.clear();
     this.pendingPoints = [];
 
     const handle = (events: ReturnType<TagStream['push']>, final: boolean) => {
       for (const ev of events) {
+        if (ev.type === 'agent') {
+          handoff = true;
+          return;
+        }
         if (ev.type === 'point') {
           if (settings.speakReplies) this.pendingPoints.push(ev.point);
           else this.queuePoint(ev.point);
@@ -245,12 +252,26 @@ export class Companion {
       this.space = currentAi(settings).coordSpace;
       await this.brain.ask(question, shot, {
         onText: (delta) => {
-          if (turn !== this.turn) return;
-          if (this.state === 'thinking') this.setState('speaking');
-          handle(tags.push(delta), false);
+          if (turn !== this.turn || handoff) return;
+          const events = tags.push(delta);
+          if (events.some((e) => e.type === 'agent')) {
+            // The model wants agent mode to do this: switch over.
+            handoff = true;
+            console.log('[perch] chat handed the request to agent mode:', question);
+            this.engineSend('engine:speak-stop');
+            this.speaking.clear();
+            this.pointsBySpeech.clear();
+            this.brain.abort();
+            void this.runAgent(question, question, Promise.resolve(shot?.display ?? null), turn);
+            return;
+          }
+          if (this.state === 'thinking' && events.some((e) => e.type === 'text' && e.text.trim())) {
+            this.setState('speaking');
+          }
+          handle(events, false);
         },
       });
-      if (turn !== this.turn) return;
+      if (turn !== this.turn || handoff) return;
       handle(tags.end(), true);
       this.lastAnswer = display.trim();
       this.streamDone = true;
@@ -258,7 +279,7 @@ export class Companion {
       this.d.onStatus(this.status());
       this.maybeFinish();
     } catch (err) {
-      if (turn !== this.turn) return;
+      if (turn !== this.turn || handoff) return;
       const msg = friendlyAiError(err, settings.provider);
       if (!msg) return; // aborted
       console.error('[perch] AI error', err);
@@ -282,7 +303,9 @@ export class Companion {
     }
   }
 
-  private async runAgent(question: string, task: string, displayPromise: Promise<Display | null>) {
+  private async runAgent(question: string, task: string, displayPromise: Promise<Display | null>, fromTurn?: number) {
+    // A hand-off from chat continues the same turn.
+    if (fromTurn !== undefined && fromTurn !== this.turn) return;
     const turn = this.turn;
     const settings = this.d.settings();
     this.lastQuestion = question;
